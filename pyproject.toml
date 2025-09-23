@@ -1,0 +1,11 @@
+[project]
+name = "spdo-app-catalogo"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openpyxl>=3.1.5",
+    "snowflake-snowpark-python>=1.39.0",
+    "streamlit>=1.49.1",
+]
