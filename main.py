@@ -1,6 +1,9 @@
 import streamlit as st
 from pathlib import Path
 from src.db_snowflake import get_session, ensure_table
+import sys
+import os
+sys.path.append(os.path.abspath('.'))
 
 st.set_page_config(
     page_title="Catálogo de Insumos",
