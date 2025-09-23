@@ -4,7 +4,7 @@ import streamlit as st
 
 # ====== SE VOCÊ USA SUAS FUNÇÕES ======
 from src.db_snowflake import get_session, ensure_table, insert_item
-from src.utils import data_hoje, extrair_chaves, campos_obrigatorios_ok
+from src.utils import data_hoje, extrair_valores, campos_obrigatorios_ok, gerar_sinonimo, gerar_palavra_chave
 
 st.set_page_config(page_title="Catálogo • Cadastro", layout="wide")
 st.title("📝 Cadastro de Insumos")
@@ -35,11 +35,11 @@ with tab_form:
             ean_produto = st.text_input("EAN DO PRODUTO")
             insumo = st.text_input("INSUMO")
             item = st.text_input("ITEM")
+            especificacao = st.text_area("ESPECIFICAÇÃO (CHAVE: VALOR; …)", height=122)
             marca = st.text_input("MARCA")
+        with col3:
             emb_produto = st.text_input("EMBALAGEM DO PRODUTO")
             un_med = st.text_input("UNIDADE DE MEDIDA")
-        with col3:
-            especificacao = st.text_area("ESPECIFICAÇÃO (CHAVE: VALOR; …)", height=160)
             qtd_med = st.number_input("QUANTIDADE DE MEDIDA", min_value=0.00, step=0.01)
             emb_comercial = st.text_input("EMBALAGEM COMERCIAL")
             qtd_emb_comercial = st.number_input("QTD EMBALAGEM COMERCIAL", min_value=0, step=1)
@@ -66,6 +66,7 @@ with tab_form:
             if not ok:
                 st.warning(f"Preencha: {', '.join(faltando)}")
             else:
+                descricao = extrair_valores(especificacao)
                 item_dict = {
                     "REFERENCIA": referencia,
                     "DATA_CADASTRO": data_hoje(),
@@ -78,7 +79,7 @@ with tab_form:
                     "EAN_PRODUTO": ean_produto,
                     "INSUMO": insumo,
                     "ITEM": item,
-                    "DESCRICAO": extrair_chaves(especificacao),
+                    "DESCRICAO": descricao,
                     "ESPECIFICACAO": especificacao,
                     "MARCA": marca,
                     "EMB_PRODUTO": emb_produto,
@@ -86,6 +87,8 @@ with tab_form:
                     "QTD_MED": float(qtd_med) if qtd_med is not None else None,
                     "EMB_COMERCIAL": emb_comercial,
                     "QTD_EMB_COMERCIAL": int(qtd_emb_comercial) if qtd_emb_comercial is not None else None,
+                    "SINONIMO": gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb_comercial, emb_comercial),
+                    "PALAVRA_CHAVE": gerar_palavra_chave(subfamilia, item, marca, emb_produto, qtd_med, un_med)
                 }
                 ok, msg = insert_item(session, item_dict)
                 if ok:
@@ -216,8 +219,8 @@ with tab_excel:
                     "EAN_PRODUTO": pick(row, "EAN_PRODUTO", "EAN"),
                     "INSUMO": pick(row, "INSUMO"),
                     "ITEM": pick(row, "ITEM"),
-                    # DESCRICAO: se quiser os valores apenas, pode usar sua extrair_chaves(ESPECIFICACAO_TXT)
-                    "DESCRICAO": extrair_chaves(pick(row, "ESPECIFICACAO_TXT") or ""),
+                    # DESCRICAO: se quiser os valores apenas, pode usar sua extrair_valores(ESPECIFICACAO_TXT)
+                    "DESCRICAO": extrair_valores(pick(row, "ESPECIFICACAO_TXT") or ""),
                     # ESPECIFICACAO: texto legível
                     "ESPECIFICACAO": pick(row, "ESPECIFICACAO_TXT"),
                     "MARCA": pick(row, "MARCA"),

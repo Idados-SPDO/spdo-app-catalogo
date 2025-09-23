@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS TB_CATALOGO_INSUMOS (
   QTD_MED            FLOAT,
   EMB_COMERCIAL      VARCHAR,
   QTD_EMB_COMERCIAL  NUMBER,
+  SINONIMO           VARCHAR,
+  PALAVRA_CHAVE      VARCHAR,
   CONSTRAINT PK_CATALOGO PRIMARY KEY (ID)
 );
 """
@@ -60,7 +62,7 @@ def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
         "REFERENCIA","DATA_CADASTRO","DATA_ATUALIZACAO",
         "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
         "EAN_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
-        "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL"
+        "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL","SINONIMO","PALAVRA_CHAVE"
     ]
     placeholders = ", ".join([f":{i+1}" for i in range(len(cols))])
     sql = f"INSERT INTO TB_CATALOGO_INSUMOS ({', '.join(cols)}) VALUES ({placeholders})"

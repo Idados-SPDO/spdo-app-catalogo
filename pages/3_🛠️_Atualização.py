@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from src.db_snowflake import get_session, listar_itens_df
+from src.utils import data_hoje
 
 st.set_page_config(page_title="Catálogo • Atualização", layout="wide")
 st.title("🛠️ Atualização de Insumos")
@@ -156,7 +157,7 @@ if st.button("💾 Salvar alterações"):
         # string/date -> escapa aspas simples
         return "'" + str(val).replace("'", "''") + "'"
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = data_hoje()
 
     for key_val, cols_changed in changes:
         set_parts = []
