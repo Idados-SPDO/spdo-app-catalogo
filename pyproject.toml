@@ -8,4 +8,5 @@ dependencies = [
     "openpyxl>=3.1.5",
     "snowflake-snowpark-python>=1.39.0",
     "streamlit>=1.49.1",
+    "xlsxwriter>=3.2.9",
 ]

@@ -24,46 +24,15 @@ def get_session() -> Session:
 # DDL/CRUD
 # =========================
 
-DDL = """
-CREATE TABLE IF NOT EXISTS TB_CATALOGO_INSUMOS (
-  ID                 NUMBER AUTOINCREMENT START 1 INCREMENT 1,
-  REFERENCIA         VARCHAR,
-  DATA_CADASTRO      VARCHAR,
-  DATA_ATUALIZACAO   VARCHAR,
-  GRUPO              VARCHAR,
-  CATEGORIA          VARCHAR,
-  SEGMENTO           VARCHAR,
-  FAMILIA            VARCHAR,
-  SUBFAMILIA         VARCHAR,
-  EAN_PRODUTO        VARCHAR UNIQUE,
-  INSUMO             VARCHAR UNIQUE,
-  ITEM               VARCHAR,
-  DESCRICAO          VARCHAR,
-  ESPECIFICACAO      VARCHAR,
-  MARCA              VARCHAR,
-  EMB_PRODUTO        VARCHAR,
-  UN_MED             VARCHAR,
-  QTD_MED            FLOAT,
-  EMB_COMERCIAL      VARCHAR,
-  QTD_EMB_COMERCIAL  NUMBER,
-  SINONIMO           VARCHAR,
-  PALAVRA_CHAVE      VARCHAR,
-  CONSTRAINT PK_CATALOGO PRIMARY KEY (ID)
-);
-"""
-
-
-def ensure_table(session: Session) -> None:
-    session.sql(DDL).collect()
-
-
 def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
     cols = [
         "REFERENCIA","DATA_CADASTRO","DATA_ATUALIZACAO",
         "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
-        "EAN_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
+        "CODIGO_PRODUTO","TIPO_PRODUTO",  # <— aqui
+        "INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
         "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL","SINONIMO","PALAVRA_CHAVE"
     ]
+
     placeholders = ", ".join([f":{i+1}" for i in range(len(cols))])
     sql = f"INSERT INTO TB_CATALOGO_INSUMOS ({', '.join(cols)}) VALUES ({placeholders})"
     try:
@@ -72,12 +41,12 @@ def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
     except Exception as e:
         msg = str(e)
         if "unique" in msg.lower():
-            return False, "EAN_PRODUTO ou INSUMO já cadastrado."
+            return False, "CODIGO_PRODUTO ou INSUMO já cadastrado."
         return False, f"Erro ao salvar item: {e}"
 
 
 def listar_itens_df(session: Session) -> pd.DataFrame:
     try:
-        return session.table("TB_CATALOGO_INSUMOS").sort("DATA_CADASTRO", ascending=False).to_pandas()
+        return session.table("BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS").sort("DATA_CADASTRO", ascending=False).to_pandas()
     except Exception:
         return pd.DataFrame()

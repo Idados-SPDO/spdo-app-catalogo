@@ -1,58 +1,47 @@
+# main.py
 import streamlit as st
 from pathlib import Path
-from src.db_snowflake import get_session, ensure_table
-import sys
-import os
-sys.path.append(os.path.abspath('.'))
+from src.auth import init_auth, is_authenticated, current_user, logout_user
 
-st.set_page_config(
-    page_title="Catálogo de Insumos",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Catálogo de Insumos", layout="wide", initial_sidebar_state="expanded")
 
-# --- logo local (asset/...) ---
-logo_path = Path("assets") / "logo_ibre.png"   # ajuste o nome do arquivo
+# logo
+logo_path = Path("assets") / "logo_ibre.png"
 if logo_path.exists():
-    st.logo(str(logo_path))
-else:
-    st.warning(f"Logo não encontrada em {logo_path}. Coloque sua imagem nessa pasta ou ajuste o caminho.")
+    try:
+        st.logo(str(logo_path))
+    except Exception:
+        st.sidebar.image(str(logo_path), use_column_width=True)
 
-st.title("📦 Catálogo de Insumos")
-st.caption("Multipage app • Snowflake + Snowpark")
+# auth
+init_auth()
 
-# --- (opcional) esconder menu padrão do multipage ---
-st.markdown(
-    """
-    <style>
-      /* algumas versões usam div/nav/section com esse testid */
-      div[data-testid="stSidebarNav"], nav[data-testid="stSidebarNav"], section[data-testid="stSidebarNav"] {
-        display: none !important;
-      }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+# 1) Defina as páginas
+LOGIN_PAGE = [st.Page("pages/0_Login.py", title="🔐 Login")]
+APP_PAGES  = [
+    st.Page("pages/0_Home.py",        title="🏠 Início"),
+    st.Page("pages/1_Catalogo.py",    title="📚 Catálogo"),
+    st.Page("pages/2_Cadastro.py",    title="➕ Cadastro"),
+    st.Page("pages/3_Atualizacao.py", title="🛠️ Atualização"),
+    st.Page("pages/4_Validacao.py",   title="✅ Validação"),
+]
 
-# --- navegação customizada (lateral) ---
+# 2) Registre a navegação ANTES de usar page_link
+nav = st.navigation({"Navegação": APP_PAGES} if is_authenticated() else {"Acesso": LOGIN_PAGE})
+
+# 3) Sidebar global
 with st.sidebar:
-    st.header("Navegação")
-    # ajuste os nomes dos arquivos conforme os seus em pages/
-    st.page_link("main.py", label="🏠 Index")            # esta própria página
-    st.page_link("pages/1_📚_Catálogo.py",  label="📚 Catálogo")
-    st.page_link("pages/2_➕_Cadastro.py",  label="➕ Cadastro")
-    st.page_link("pages/3_🛠️_Atualização.py", label="🛠️ Atualização")
+    if is_authenticated():
+        u = current_user()
+        st.caption("Logado como")
+        st.markdown(f"**{u['name']}** (`{u['username']}`)")
+        if st.button("🚪 Sair", use_container_width=True, key="logout_sidebar"):
+            logout_user()
+            st.rerun()
+    else:
+        st.info("Faça login para ver o menu.")
+        # use o objeto Page já registrado, não a string do caminho
+        st.page_link(LOGIN_PAGE[0], label="Ir para Login", icon="🔐")
 
-session = get_session()
-ensure_table(session)
-st.success("Conexão com Snowflake ativa e tabela garantida.")
-
-st.markdown(
-    """
-    ### Dicas
-    - Use **➕ Cadastro** para inserir novos itens.
-    - Consulte e filtre em **📚 Catálogo**.
-    - Atualize registros em **🛠️ Atualização**.
-    - Este projeto usa **Snowpark**; em ambiente Snowflake, a sessão ativa é detectada automaticamente.
-    """
-)
+# 4) Rode a navegação
+nav.run()
