@@ -1,3 +1,4 @@
+# pages/1_Catalogo.py
 import streamlit as st
 import pandas as pd
 from src.db_snowflake import get_session
