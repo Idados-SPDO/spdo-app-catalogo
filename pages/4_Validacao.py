@@ -1,4 +1,3 @@
-# pages/3_Validacao.py
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date
@@ -31,8 +30,8 @@ session = get_session()
 session.sql("ALTER SESSION SET TIMEZONE = 'America/Sao_Paulo'").collect()
 
 
-tab_valida, tab_aprov, tab_corr, tab_hist = st.tabs(
-    ["✔️ Validação", "✅ Aprovados", "📝 Correção", "🧾 Histórico"]
+tab_valida, tab_corr = st.tabs(
+    ["✔️ Validação", "❌ Não Aprovados"]
 )
 
 # ==============================
@@ -145,132 +144,6 @@ with tab_valida:
     if st.session_state.get("open_reprova"):
         st.session_state.open_reprova = False
         dlg_reprova(ids_sel)
-
-# ==============================
-# Aba 2: Histórico (somente leitura a partir da auditoria)
-# ==============================
-with tab_hist:
-    st.subheader("Histórico de validações")
-    # filtros de histórico
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        f_dec = st.selectbox("Decisão", ["— Todos —", "APROVADO", "REJEITADO"], index=0, key="hist_f_dec")
-    with col2:
-        # usuários distintos na auditoria
-        try:
-            users_df = session.sql(f"SELECT DISTINCT VALIDADO_POR, NOME_VALIDADOR FROM {FQN_AUDIT}").to_pandas()
-        except Exception:
-            users_df = pd.DataFrame(columns=["VALIDADO_POR","NOME_VALIDADOR"])
-        user_opts = ["— Todos —"] + sorted(
-            {f"{r['NOME_VALIDADOR']} ({r['VALIDADO_POR']})" if pd.notna(r['NOME_VALIDADOR']) else r['VALIDADO_POR']
-             for _, r in users_df.iterrows() if pd.notna(r.get("VALIDADO_POR"))}
-        )
-        f_user = st.selectbox("Validador", user_opts, index=0, key="hist_f_user")
-    with col3:
-        f_ini = st.date_input("Data início", value=date.today().replace(day=1), key="hist_f_ini")
-    with col4:
-        f_fim = st.date_input("Data fim", value=date.today(), key="hist_f_fim")
-
-    # monta SQL do histórico com joins leves para campos visuais
-    
-    sql_hist = f"""
-SELECT
-  a.ID_EVENTO,
-  a.VALIDADO_EM,                                  -- NTZ
-  a.VALIDADO_EM::TIMESTAMP_LTZ AS VALIDADO_EM_BR, -- usa TIMEZONE da sessão (São Paulo)
-  a.DECISAO,
-  a.OBS,
-  a.VALIDADO_POR,
-  a.NOME_VALIDADOR,
-  a.ID_ITEM,
-  a.CODIGO_PRODUTO,
-  t.INSUMO,
-  t.ITEM,
-  t.MARCA,
-  t.TIPO_PRODUTO,
-  t.PALAVRA_CHAVE
-FROM {FQN_AUDIT} a
-LEFT JOIN {FQN_MAIN} t
-  ON a.ID_ITEM = t.ID
-WHERE a.VALIDADO_EM >= TO_TIMESTAMP_NTZ('{f_ini} 00:00:00')
-  AND a.VALIDADO_EM <  TO_TIMESTAMP_NTZ('{f_fim} 23:59:59')
-"""
-
-    # filtros dinâmicos (sempre vêm ANTES do ORDER BY)
-    if f_dec in ("APROVADO", "REJEITADO"):
-        sql_hist += f" AND a.DECISAO = '{f_dec}'"
-
-    if f_user != "— Todos —":
-        # extrai username entre parênteses se vier no formato "Nome (username)"
-        if "(" in f_user and f_user.endswith(")"):
-            username = f_user.split("(")[-1][:-1]
-        else:
-            username = f_user
-        username_esc = username.replace("'", "''")
-        sql_hist += f" AND a.VALIDADO_POR = '{username_esc}'"
-
-    # ORDER BY só aqui no final (sem ponto e vírgula)
-    sql_hist += " ORDER BY a.VALIDADO_EM DESC"
-
-
-
-    
-    try:
-        df_hist = session.sql(sql_hist).to_pandas()
-    except Exception as e:
-        st.error(f"Falha ao carregar histórico: {e}")
-        df_hist = pd.DataFrame()
-
-    st.dataframe(
-        df_hist,
-        hide_index=True,
-        use_container_width=True,
-        column_config={
-            "VALIDADO_EM_BR": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm"),
-            # Se quiser, esconda a coluna original:
-            # "VALIDADO_EM": None,
-        }
-    )
-
-
-with tab_aprov:
-    st.subheader("Itens aprovados")
-    FQN_APR = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS"
-
-    try:
-        df_apr = session.table(FQN_APR).sort("APROVADO_EM", ascending=False).to_pandas()
-    except Exception as e:
-        st.error(f"Erro ao carregar aprovados: {e}")
-        df_apr = pd.DataFrame()
-
-    if df_apr.empty:
-        st.info("Nenhum item aprovado.")
-    else:
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            f_cod = st.text_input("Código do Produto (exato)", key="apr_f_cod")
-        with c2:
-            f_tipo = st.text_input("Tipo do Produto (contém)", key="apr_f_tipo")
-        with c3:
-            f_insu = st.text_input("Insumo (contém)", key="apr_f_insu")
-
-        mask_apr = pd.Series(True, index=df_apr.index)
-        if f_cod:
-            mask_apr &= df_apr.get("CODIGO_PRODUTO", pd.Series("", index=df_apr.index)).astype(str).eq(f_cod.strip())
-        if f_tipo:
-            mask_apr &= df_apr.get("TIPO_PRODUTO", pd.Series("", index=df_apr.index)).astype(str).str.contains(f_tipo, case=False, regex=False)
-        if f_insu:
-            mask_apr &= df_apr.get("INSUMO", pd.Series("", index=df_apr.index)).astype(str).str.contains(f_insu, case=False, regex=False)
-
-        st.dataframe(
-            df_apr[mask_apr],
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "APROVADO_EM": st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm")
-            }
-        )
-
 
 with tab_corr:
     st.subheader("Itens para correção")
