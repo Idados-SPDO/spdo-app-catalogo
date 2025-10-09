@@ -19,11 +19,11 @@ init_auth()
 # 1) Defina as páginas
 LOGIN_PAGE = [st.Page("pages/0_Login.py", title="🔐 Login")]
 APP_PAGES  = [
-    st.Page("pages/0_Home.py",        title="🏠 Início"),
-    st.Page("pages/1_Catalogo.py",    title="📚 Catálogo"),
+    st.Page("pages/1_Home.py",        title="🏠 Início"),
     st.Page("pages/2_Cadastro.py",    title="➕ Cadastro"),
-    st.Page("pages/3_Atualizacao.py", title="🛠️ Atualização"),
-    st.Page("pages/4_Validacao.py",   title="✅ Validação"),
+    st.Page("pages/3_Validacao.py",   title="✅ Validação"),
+    st.Page("pages/4_Catalogo.py",    title="📚 Catálogo"),
+    st.Page("pages/5_Atualizacao.py", title="🛠️ Atualização"),
 ]
 
 # 2) Registre a navegação ANTES de usar page_link
@@ -41,7 +41,7 @@ with st.sidebar:
     else:
         st.info("Faça login para ver o menu.")
         # use o objeto Page já registrado, não a string do caminho
-        st.page_link(LOGIN_PAGE[0], label="Ir para Login", icon="🔐")
+        st.page_link(LOGIN_PAGE[0], label="Login", icon="🔐")
 
 # 4) Rode a navegação
 nav.run()

@@ -2,8 +2,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from io import BytesIO
-import pandas as pd
-
+from typing import Iterable, List
 import io
 import pandas as pd
 
@@ -146,143 +145,96 @@ def _to_int_safe(x):
     except Exception:
         return None
     
+COLS_TEMPLATE = [
+    "REFERENCIA","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
+    "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","ESPECIFICACAO",
+    "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
+]
 
 def gerar_template_excel_catalogo() -> bytes:
     """
-    Gera um XLSX com:
-      - Sheet 'Dados' com os mesmos cabeçalhos do exemplo do usuário
-        (inclui um bloco ESPECIFICACAO com 6 colunas posicionais).
-      - A PRIMEIRA LINHA DE DADOS define as chaves das especificações
-        nas 6 colunas do bloco (COMPLETA, TIPO, TEMPERO, OSSO, CARACTERISTICA, LINHA).
-      - A SEGUNDA LINHA DE DADOS é um exemplo preenchido.
-      - Sheet 'Instruções' com orientações.
-    Obs.: As 6 colunas do bloco ESPECIFICACAO têm nomes repetidos/“vazios” propositalmente,
-    pois seu pipeline lê por POSIÇÃO (13..18) e captura a linha 0 de dados como header do bloco.
+    Gera um Excel com a ordem exata de colunas usada no cadastro.
+    OBS: REFERENCIA e INSUMO são opcionais; demais colunas são obrigatórias.
+    ESPECIFICACAO deve ser preenchida no formato 'CHAVE: VALOR; CHAVE2: VALOR2'
     """
+    df = pd.DataFrame(columns=COLS_TEMPLATE)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name="CATALOGO")
+        # opcional: dica em uma segunda aba
+        dicas = pd.DataFrame({
+            "CAMPO": COLS_TEMPLATE,
+            "OBS": [
+                "Opcional", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório",
+                "Obrigatório", "Obrigatório", "Opcional", "Obrigatório", "Obrigatório",
+                "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório",
+            ]
+        })
+        dicas.to_excel(writer, index=False, sheet_name="DICAS")
+    return buf.getvalue()
+# === ORDEM PADRÃO DO CATÁLOGO (referência para "todas as demais páginas") ===
+# Obs.: já com TIPO_CODIGO
+BASE_ORDER_CATALOGO: list[str] = [
+    "ID",
+    "CODIGO_PRODUTO", "TIPO_CODIGO",
+    "GRUPO", "CATEGORIA", "SEGMENTO", "FAMILIA", "SUBFAMILIA",
+    "ITEM", "MARCA",
+    "EMB_PRODUTO", "UN_MED", "QTD_MED", "EMB_COMERCIAL", "QTD_EMB_COMERCIAL",
+    "PALAVRA_CHAVE", "SINONIMO", "DESCRICAO", "ESPECIFICACAO",
+    "REFERENCIA",
+    "DATA_CADASTRO", "DATA_ATUALIZACAO",
+    "APROVADO_EM", "APROVADO_POR", "NOME_VALIDADOR",
+]
 
-    # Cabeçalhos exatamente na ordem do exemplo
-    cols = [
-        "ORIGINAL",
-        "CODIGO DO INSUMO",
-        "DATA_CADASTRO",
-        "DATA_ATUALIZAÇÃO",
-        "DICIONARIO",
-        "GRUPO",
-        "SUBGRUPO",
-        "CATEGORIA",
-        "FAMILIA",
-        "SUBFAMILIA",
-        "ITEM",
-        "EAN",
-        "ESPECIFICACAO", "", "", "", "", "",        # 6 colunas posicionais (13..18)
-        "TIPO_PRODUTO",                              # incluído no template
-        "MARCA",
-        "EMB_PRODUTO",
-        "UN_MED",
-        "QTD_MED",
-        "EMB_COMERCIAL",
-        "QTD_EMB_COMERCIAL",
-    ]
+# === ORDEM ESPECÍFICA DA ATUALIZAÇÃO (a que você descreveu) ===
+BASE_ORDER_ATUALIZACAO: list[str] = [
+    "ID", "DATA_CADASTRO", "DATA_ATUALIZACAO",
+    "GRUPO", "CATEGORIA", "SEGMENTO", "FAMILIA", "SUBFAMILIA",
+    "INSUMO", "ITEM",
+    "CODIGO_PRODUTO", "TIPO_CODIGO",
+    "EMB_PRODUTO", "UN_MED", "QTD_MED", "EMB_COMERCIAL", "QTD_EMB_COMERCIAL",
+    "DESCRICAO", "ESPECIFICACAO",
+    "PALAVRA_CHAVE", "SINONIMO",
+    "REFERENCIA",
+]
 
-    # Linha 1 de dados: nomes das especificações no bloco 13..18
-    r0 = {c: "" for c in cols}
-    r0.update({
-        cols[12]: "COMPLETA",    # 13a coluna
-        cols[13]: "TIPO",
-        cols[14]: "TEMPERO",
-        cols[15]: "OSSO",
-        cols[16]: "CARACTERISTICA",
-        cols[17]: "LINHA",
-    })
+def apply_column_order(
+    df: pd.DataFrame,
+    base_order: Iterable[str],
+    prepend: Iterable[str] | None = None,
+    append: Iterable[str] | None = None,
+) -> pd.DataFrame:
+    """
+    Reordena colunas seguindo:
+    1) prepend (se existir)
+    2) base_order (apenas as colunas presentes)
+    3) quaisquer colunas restantes na ordem original
+    4) append (empurradas para o final, se existirem)
+    """
+    cols_df: List[str] = list(df.columns)
+    seen: set[str] = set()
 
-    # Linha 2 de dados: exemplo preenchido (similar ao que você enviou)
-    r1 = {c: "" for c in cols}
-    r1.update({
-        "ORIGINAL": "7896581300188,Asa de Frango Bandeja Pif Paf 1kg,Frango",
-        "CODIGO DO INSUMO": "",                  # se tiver um código interno
-        "DATA_CADASTRO": "11/09/2025",
-        "DATA_ATUALIZAÇÃO": "",
-        "DICIONARIO": "",
-        "GRUPO": "ALIMENTOS E BEBIDAS",
-        "SUBGRUPO": "ALIMENTOS",
-        "CATEGORIA": "CARNES E AVES",
-        "FAMILIA": "AVES",
-        "SUBFAMILIA": "FRANGO",
-        "ITEM": "ASA DE FRANGO",
-        "EAN": "7896581300188",                  # como texto para evitar notação científica
-        cols[12]: "ASA DE FRANGO CONGELADO SEM TEMPERO COM OSSO",
-        cols[13]: "CONGELADO",
-        cols[14]: "SEM TEMPERO",
-        cols[15]: "COM OSSO",
-        cols[16]: "",
-        cols[17]: "",
-        "TIPO_PRODUTO": "CONGELADO",
-        "MARCA": "PIF PAF",
-        "EMB_PRODUTO": "BANDEJA",
-        "UN_MED": "KG",
-        "QTD_MED": 1,
-        "EMB_COMERCIAL": "UNIDADE",
-        "QTD_EMB_COMERCIAL": 1,
-    }) # type: ignore
+    def pick(seq: Iterable[str] | None) -> list[str]:
+        out: list[str] = []
+        if not seq:
+            return out
+        for c in seq:
+            if c in cols_df and c not in seen:
+                out.append(c)
+                seen.add(c)
+        return out
 
-    # Outro exemplo (opcional)
-    r2 = {c: "" for c in cols}
-    r2.update({
-        "ORIGINAL": "7898525451420,Asa de Frango Congelada Pacote LeVida 900g,Asa de Frango,Frango",
-        "DATA_CADASTRO": "11/09/2025",
-        "GRUPO": "ALIMENTOS E BEBIDAS",
-        "SUBGRUPO": "ALIMENTOS",
-        "CATEGORIA": "CARNES E AVES",
-        "FAMILIA": "AVES",
-        "SUBFAMILIA": "FRANGO",
-        "ITEM": "ASA DE FRANGO",
-        "EAN": "7898525451420",
-        cols[12]: "ASA DE FRANGO CONGELADO SEM TEMPERO COM OSSO IQF",
-        cols[13]: "CONGELADO",
-        cols[14]: "SEM TEMPERO",
-        cols[15]: "COM OSSO",
-        cols[16]: "IQF",
-        cols[17]: "",
-        "TIPO_PRODUTO": "CONGELADO",
-        "MARCA": "LEVIDA",
-        "EMB_PRODUTO": "PACOTE",
-        "UN_MED": "G",
-        "QTD_MED": 900,
-        "EMB_COMERCIAL": "UNIDADE",
-        "QTD_EMB_COMERCIAL": 1,
-    }) # type: ignore
+    order: list[str] = []
+    order += pick(prepend)
+    order += pick(base_order)
+    order += [c for c in cols_df if c not in seen]  # sobras em ordem original
+    order += pick(append)
 
-    df = pd.DataFrame([r0, r1, r2], columns=cols)
+    return df[order]
 
-    # Instruções
-    instr = pd.DataFrame({
-        "Instruções": [
-            "1) Preencha as colunas normalmente (ORIGINAL, GRUPO, etc).",
-            "2) O BLOCO ESPECIFICACAO são 6 colunas (posições 13..18).",
-            "   A PRIMEIRA LINHA DE DADOS (logo após o cabeçalho) deve conter os NOMES das especificações nessas 6 colunas.",
-            "   Ex.: COMPLETA | TIPO | TEMPERO | OSSO | CARACTERISTICA | LINHA",
-            "3) A PARTIR DA LINHA SEGUINTE, preencha os VALORES para essas mesmas chaves.",
-            "4) O pipeline vai ler a linha 1 de dados para descobrir os nomes das chaves e depois montar ESPECIFICACAO_TXT.",
-            "5) Use '-' em SUBFAMILIA para cair no fallback de FAMILIA na PALAVRA_CHAVE; use '-' em MARCA para omiti-la.",
-            "6) EAN e CODIGO DO INSUMO são tratados como texto; evite fórmulas/formatos que gerem notação científica.",
-            "7) TIPO_PRODUTO é opcional, mas recomendado (aparece nos filtros da lista).",
-        ]
-    })
+# Açúcares sintáticos
+def order_catalogo(df: pd.DataFrame, prepend: Iterable[str] | None = None, append: Iterable[str] | None = None) -> pd.DataFrame:
+    return apply_column_order(df, BASE_ORDER_CATALOGO, prepend, append)
 
-    bio = io.BytesIO()
-    with pd.ExcelWriter(bio, engine="xlsxwriter") as writer:
-        df.to_excel(writer, index=False, sheet_name="Dados")
-        instr.to_excel(writer, index=False, sheet_name="Instruções")
-
-        # Auto-ajuste de largura
-        ws_d = writer.sheets["Dados"]
-        for i in range(len(df.columns)):
-            col_series = df.iloc[:, i].astype(str)
-            max_len = max(12, min(50, int(max(10, col_series.map(len).max()))))
-            ws_d.set_column(i, i, max_len)
-
-        ws_i = writer.sheets["Instruções"]
-        ws_i.set_column(0, 0, 110)
-
-    bio.seek(0)
-    return bio.getvalue()
+def order_atualizacao(df: pd.DataFrame, prepend: Iterable[str] | None = None, append: Iterable[str] | None = None) -> pd.DataFrame:
+    return apply_column_order(df, BASE_ORDER_ATUALIZACAO, prepend, append)

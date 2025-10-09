@@ -30,7 +30,7 @@ def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
     cols = [
         "REFERENCIA","DATA_CADASTRO","DATA_ATUALIZACAO",
         "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
-        "CODIGO_PRODUTO","TIPO_PRODUTO",  # <— aqui
+        "CODIGO_PRODUTO","TIPO_CODIGO",  # <— aqui
         "INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
         "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL","SINONIMO","PALAVRA_CHAVE"
     ]
