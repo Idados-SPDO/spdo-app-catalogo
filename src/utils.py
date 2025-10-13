@@ -172,8 +172,7 @@ def gerar_template_excel_catalogo() -> bytes:
         })
         dicas.to_excel(writer, index=False, sheet_name="DICAS")
     return buf.getvalue()
-# === ORDEM PADRÃO DO CATÁLOGO (referência para "todas as demais páginas") ===
-# Obs.: já com TIPO_CODIGO
+
 BASE_ORDER_CATALOGO: list[str] = [
     "ID",
     "CODIGO_PRODUTO", "TIPO_CODIGO",

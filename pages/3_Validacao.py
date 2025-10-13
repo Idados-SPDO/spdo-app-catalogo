@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
-from src.db_snowflake import get_session, listar_itens_df
+from src.db_snowflake import apply_common_filters, build_user_options, get_session, listar_itens_df, load_user_display_map, log_validacao, log_reprovacao
 from src.auth import init_auth, is_authenticated, current_user
 
 # ==============================
 # Constantes / Config
 # ==============================
 FQN_MAIN  = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS"
-FQN_AUDIT = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_VALIDACOES"
 FQN_COR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_CORRECOES"
 FQN_APR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS"
 
@@ -15,8 +14,7 @@ ORDER_VALIDACAO = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
     "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
-    "SINONIMO","PALAVRA_CHAVE","DATA_CADASTRO","USUARIO_CADASTRO","DATA_VALIDACAO",
-    "USUARIO_VALIDADOR","DATA_ATUALIZACAO","USUARIO_ATUALIZACAO","REFERENCIA",
+    "SINONIMO","PALAVRA_CHAVE","DATA_CADASTRO","USUARIO_CADASTRO","REFERENCIA",
 ]
 
 ORDER_CORRECOES = [
@@ -25,11 +23,8 @@ ORDER_CORRECOES = [
     "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","REFERENCIA",
     "DATA_CADASTRO","USUARIO_CADASTRO",
-    "DATA_REPROVACAO","USUARIO_REPROVACAO",      # novos
+    "DATA_REPROVACAO","USUARIO_REPROVACAO",
     "MOTIVO",
-    "DATA_VALIDACAO","USUARIO_VALIDADOR",
-    "DATA_ATUALIZACAO","USUARIO_ATUALIZACAO",
-    "STATUS_VALIDACAO",
 ]
 
 EDITABLE_COR_COLS = [
@@ -89,17 +84,6 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
     session.sql("ALTER SESSION SET TIMEZONE = 'America/Sao_Paulo'").collect()
     ids_csv = ", ".join(str(i) for i in ids)
 
-    # 1) Auditoria (INSERT em lote)
-    values = []
-    for _id in ids:
-        row = df_items.loc[df_items["ID"] == _id].head(1)
-        cod = None if row.empty else (None if pd.isna(row["CODIGO_PRODUTO"].iloc[0]) else str(row["CODIGO_PRODUTO"].iloc[0]))
-        values.append(f"({_id}, {sql_str(cod)}, {sql_str(decisao)}, {sql_str(obs)}, {sql_str(user['username'])}, {sql_str(user['name'])})")
-    sql_ins_audit = f"""
-        INSERT INTO {FQN_AUDIT}
-          (ID_ITEM, CODIGO_PRODUTO, DECISAO, OBS, VALIDADO_POR, NOME_VALIDADOR)
-        VALUES {", ".join(values)}
-    """
 
     # 2) Colunas comuns (principal -> destino)
     get_cols = lambda table_fqn: [c.name for c in session.table(table_fqn).schema]
@@ -126,14 +110,10 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
         cols_apr_all = get_cols(target)
         meta_sets = []
         if "USUARIO_APROVACAO" in cols_apr_all:
-            meta_sets.append(f"USUARIO_APROVACAO = {sql_str(user['username'])}")
+            meta_sets.append(f"USUARIO_APROVACAO = {sql_str(user['name'])}")
         if "DATA_APROVACAO" in cols_apr_all:
             meta_sets.append("DATA_APROVACAO = CURRENT_TIMESTAMP()")
-        # (opcional: manter também o conceito de validador)
-        if "USUARIO_VALIDADOR" in cols_apr_all:
-            meta_sets.append(f"USUARIO_VALIDADOR = {sql_str(user['username'])}")
-        if "DATA_VALIDACAO" in cols_apr_all:
-            meta_sets.append("DATA_VALIDACAO = CURRENT_TIMESTAMP()")
+
 
         if meta_sets:
             sql_move_meta = f"""
@@ -144,6 +124,23 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
 
         toast_icon = "✅"
         destino_legenda = "Aprovados"
+        for _id in ids:
+            try:
+                cod = None
+                row = df_items.loc[df_items["ID"] == _id]
+                if not row.empty and "CODIGO_PRODUTO" in row.columns:
+                    cod = None if pd.isna(row["CODIGO_PRODUTO"].iloc[0]) else str(row["CODIGO_PRODUTO"].iloc[0])
+                log_validacao(
+                    session,
+                    item_id=_id,
+                    codigo_produto=cod,
+                    origem=FQN_MAIN,          # ou FQN_COR se a aprovação estiver vindo de correções (depende do teu fluxo)
+                    destino=FQN_APR,
+                    obs=obs,
+                    user=user,
+                )
+            except Exception:
+                pass
 
     else:
         target = FQN_COR
@@ -158,14 +155,30 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
         """
         sql_move_meta = f"""
             UPDATE {target}
-            SET USUARIO_REPROVACAO = {sql_str(user['username'])},
+            SET USUARIO_REPROVACAO = {sql_str(user['name'])},
                 DATA_REPROVACAO    = CURRENT_TIMESTAMP(),
-                MOTIVO             = {sql_str(obs)},
-                STATUS_VALIDACAO   = 'PENDENTE'
+                MOTIVO             = {sql_str(obs)}
             WHERE ID IN ({ids_csv})
         """
         toast_icon = "❌"
         destino_legenda = "Correção"
+        for _id in ids:
+            try:
+                cod = None
+                row = df_items.loc[df_items["ID"] == _id]
+                if not row.empty and "CODIGO_PRODUTO" in row.columns:
+                    cod = None if pd.isna(row["CODIGO_PRODUTO"].iloc[0]) else str(row["CODIGO_PRODUTO"].iloc[0])
+                log_reprovacao(
+                    session,
+                    item_id=_id,
+                    codigo_produto=cod,
+                    origem=FQN_MAIN,
+                    destino=FQN_COR,
+                    motivo=obs,
+                    user=user,
+                )
+            except Exception:
+                pass
 
     # 3) Delete da principal
     sql_delete_main = f"DELETE FROM {FQN_MAIN} WHERE ID IN ({ids_csv})"
@@ -173,7 +186,6 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
     # 4) Transação atômica
     try:
         session.sql("BEGIN").collect()
-        session.sql(sql_ins_audit).collect()
         session.sql(sql_move_insert).collect()
         if sql_move_meta:
             session.sql(sql_move_meta).collect()
@@ -238,13 +250,9 @@ def approve_correcoes(session, edited_df: pd.DataFrame, ids: list[int], user: di
         cols_apr_all = [c.name for c in session.table(FQN_APR).schema]
         meta_sets = []
         if "USUARIO_APROVACAO" in cols_apr_all:
-            meta_sets.append(f"USUARIO_APROVACAO = {sql_str(user['username'])}")
+            meta_sets.append(f"USUARIO_APROVACAO = {sql_str(user['name'])}")
         if "DATA_APROVACAO" in cols_apr_all:
             meta_sets.append("DATA_APROVACAO = CURRENT_TIMESTAMP()")
-        if "USUARIO_VALIDADOR" in cols_apr_all:
-            meta_sets.append(f"USUARIO_VALIDADOR = {sql_str(user['username'])}")
-        if "DATA_VALIDACAO" in cols_apr_all:
-            meta_sets.append("DATA_VALIDACAO = CURRENT_TIMESTAMP()")
 
         if meta_sets:
             session.sql(f"""
@@ -253,13 +261,6 @@ def approve_correcoes(session, edited_df: pd.DataFrame, ids: list[int], user: di
                 WHERE ID IN ({", ".join(str(i) for i in ids)})
             """).collect()
 
-        # 4) Auditoria
-        sql_audit = f"""
-            INSERT INTO {FQN_AUDIT}
-              (ID_ITEM, CODIGO_PRODUTO, DECISAO, OBS, VALIDADO_POR, NOME_VALIDADOR)
-            VALUES {", ".join(values_audit)}
-        """
-        session.sql(sql_audit).collect()
 
         # 5) Remove do CORRECOES
         session.sql(f"DELETE FROM {FQN_COR} WHERE ID IN ({', '.join(str(i) for i in ids)})").collect()
@@ -286,54 +287,63 @@ user = current_user()
 session = get_session()
 session.sql("ALTER SESSION SET TIMEZONE = 'America/Sao_Paulo'").collect()
 
-tab_valida, tab_corr = st.tabs(["🟡 Pendente de Validação", "❌ Não Aprovados"])
-
 # ---------- Aba: Pendente de Validação ----------
-with tab_valida:
-    df = listar_itens_df(session)
 
-    if df.empty:
+df = listar_itens_df(session)
+
+if df.empty:
         st.info("Nenhum item cadastrado ainda.")
-    else:
-        ALL = "— Todos —"
-        unique_opts = lambda s: [ALL] + sorted([str(x) for x in s.dropna().unique()])
+else:
+        user_map = load_user_display_map(session)
 
+        st.subheader("Filtros")
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            f_codigo = st.text_input("Código do Produto (exato)", key="val_f_codigo")
+            sel_user = st.selectbox("Usuário", build_user_options(df, user_map), index=0, key="val_sel_user")
         with c2:
-            sel_tipo = st.selectbox("Tipo do Produto",
-                                    unique_opts(df.get("TIPO_CODIGO", pd.Series(dtype=str))),
-                                    index=0, key="val_sel_tipo")
+            f_insumo = st.text_input("Insumo", key="val_f_insumo")
         with c3:
-            sel_insumo = st.selectbox("Insumo",
-                                      unique_opts(df.get("INSUMO", pd.Series(dtype=str))),
-                                      index=0, key="val_sel_insumo")
+            f_codigo = st.text_input("Código do Produto", key="val_f_codigo")
         with c4:
-            f_palavra = st.text_input("Palavra-chave (contém)", key="val_f_palavra")
+            f_palavra = st.text_input("Palavra-chave", key="val_f_palavra")
 
-        mask = pd.Series(True, index=df.index)
-        if f_codigo:
-            mask &= df.get("CODIGO_PRODUTO", pd.Series("", index=df.index)).astype(str).str.strip().eq(f_codigo.strip())
-        if sel_tipo != ALL:
-            mask &= df.get("TIPO_CODIGO", pd.Series("", index=df.index)).astype(str).eq(sel_tipo)
-        if sel_insumo != ALL:
-            mask &= df.get("INSUMO", pd.Series("", index=df.index)).astype(str).eq(sel_insumo)
-        if f_palavra:
-            mask &= df.get("PALAVRA_CHAVE", pd.Series("", index=df.index)).astype(str).str.contains(f_palavra, case=False, regex=False)
+        mask = apply_common_filters(
+            df,
+            sel_user_name=sel_user,
+            f_insumo=f_insumo,
+            f_codigo=f_codigo,
+            f_palavra=f_palavra,
+            user_map=user_map,
+        )
 
         df_view = df[mask].copy()
         if df_view.empty:
             st.info("Nenhum item com os filtros aplicados.")
             ids_sel = []
         else:
-            if "Selecionar" not in df_view.columns:
-                df_view.insert(0, "Selecionar", False)
+            # coluna de ação
+            if "Validar" not in df_view.columns:
+                df_view.insert(0, "Validar", False)
 
-            DT_COLS_VAL = ["DATA_CADASTRO", "DATA_ATUALIZACAO", "DATA_VALIDACAO"]
+            # datas formatadas
+            DT_COLS_VAL = ["DATA_CADASTRO"]
             df_view = coerce_datetimes(df_view, DT_COLS_VAL)
             dt_cfg_val = build_datetime_column_config(df_view, DT_COLS_VAL)
-            df_view = reorder(df_view, ORDER_VALIDACAO, prepend=["Selecionar"])
+
+            # reordena (leva "Validar" pro início)
+            df_view = reorder(df_view, ORDER_VALIDACAO, prepend=["Validar"])
+
+            # ==== travar tudo exceto "Validar" ====
+            col_cfg_all = {}
+            for c in df_view.columns:
+                if c == "Validar":
+                    col_cfg_all[c] = st.column_config.CheckboxColumn(label="Validar", help="Marque para incluir na ação.")
+                elif c in dt_cfg_val:
+                    # datas já com formato e travadas
+                    col_cfg_all[c] = dt_cfg_val[c]
+                else:
+                    # genérico travado
+                    col_cfg_all[c] = st.column_config.Column(disabled=True)
 
             edited = st.data_editor(
                 df_view,
@@ -341,11 +351,12 @@ with tab_valida:
                 hide_index=True,
                 use_container_width=True,
                 key="editor_validacao",
-                column_config=dt_cfg_val,
+                column_config=col_cfg_all,   # <- só "Validar" fica editável
             )
 
-            sel_mask = edited["Selecionar"] == True
+            sel_mask = edited["Validar"] == True
             ids_sel = edited.loc[sel_mask, "ID"].tolist()
+
 
         st.markdown("---")
         colA, colB = st.columns([1, 1])
@@ -393,63 +404,3 @@ with tab_valida:
         if st.session_state.get("open_reprova"):
             st.session_state.open_reprova = False
             dlg_reprova(ids_sel)
-
-# ---------- Aba: Não Aprovados ----------
-with tab_corr:
-    st.subheader("Itens para correção")
-
-    try:
-        cnt = session.sql(f"SELECT COUNT(*) AS N FROM {FQN_COR}").collect()[0]["N"]
-        st.caption(f"Total reprovados no banco: **{cnt}**")
-
-        df_cor = session.table(FQN_COR).to_pandas()
-        if "REPROVADO_EM" in df_cor.columns:
-            df_cor = df_cor.sort_values("REPROVADO_EM", ascending=False)
-    except Exception as e:
-        st.error(f"Erro ao carregar correções: {e}")
-        df_cor = pd.DataFrame()
-
-    if df_cor.empty:
-        st.info("Nenhum item reprovado.")
-    else:
-        c1, c2 = st.columns(2)
-        with c1:
-            f_cod2 = st.text_input("Código do Produto (exato)", key="cor_f_cod")
-        with c2:
-            f_mot  = st.text_input("Motivo (contém)", key="cor_f_mot")
-
-        mask_cor = pd.Series(True, index=df_cor.index)
-        if f_cod2:
-            mask_cor &= df_cor.get("CODIGO_PRODUTO", pd.Series("", index=df_cor.index)).astype(str).eq(f_cod2.strip())
-        if f_mot:
-            mask_cor &= df_cor.get("MOTIVO", pd.Series("", index=df_cor.index)).astype(str).str.contains(f_mot, case=False, regex=False)
-
-        df_cor_view = df_cor[mask_cor].copy()
-        if df_cor_view.empty:
-            st.info("Nenhum item com os filtros aplicados.")
-        else:
-            if "Selecionar" not in df_cor_view.columns:
-                df_cor_view.insert(0, "Selecionar", False)
-
-            DT_COLS_COR = ["REPROVADO_EM","DATA_CADASTRO","DATA_ATUALIZACAO","DATA_VALIDACAO"]
-            df_cor_view = coerce_datetimes(df_cor_view, DT_COLS_COR)
-            dt_cfg_cor  = build_datetime_column_config(df_cor_view, DT_COLS_COR)
-            df_cor_view = reorder(df_cor_view, ORDER_CORRECOES, prepend=["Selecionar"])
-
-            edited_cor = st.data_editor(
-                df_cor_view, num_rows="fixed", hide_index=True,
-                use_container_width=True, key="editor_correcao_page",
-                column_config=dt_cfg_cor,
-            )
-
-            sel_mask = edited_cor["Selecionar"] if "Selecionar" in edited_cor.columns else pd.Series(False, index=edited_cor.index)
-            sel_ids  = edited_cor.loc[sel_mask == True, "ID"].tolist() if "ID" in edited_cor.columns else []
-
-            st.markdown("---")
-            left, right = st.columns([2,1])
-            with left:
-                st.caption("Atualize os valores necessários diretamente na tabela acima, selecione as linhas e aprove.")
-            with right:
-                if st.button("✅ Aprovar selecionados", disabled=(len(sel_ids) == 0), key="cor_btn_aprovar"):
-                    approve_correcoes(session, edited_cor, sel_ids, user)
-                    st.rerun()

@@ -20,9 +20,10 @@ init_auth()
 LOGIN_PAGE = [st.Page("pages/0_Login.py", title="🔐 Login")]
 APP_PAGES  = [
     st.Page("pages/1_Home.py",        title="🏠 Início"),
+    st.Page("pages/4_Catalogo.py",    title="📚 Catálogo"),
     st.Page("pages/2_Cadastro.py",    title="➕ Cadastro"),
     st.Page("pages/3_Validacao.py",   title="✅ Validação"),
-    st.Page("pages/4_Catalogo.py",    title="📚 Catálogo"),
+    st.Page("pages/6_NaoAprovados.py", title="❌ Não Aprovados"),
     st.Page("pages/5_Atualizacao.py", title="🛠️ Atualização"),
 ]
 

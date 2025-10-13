@@ -1,8 +1,8 @@
 # pages/1_Catalogo.py
 import streamlit as st
 import pandas as pd
-from src.db_snowflake import get_session
-from src.utils import gerar_excel, order_catalogo
+from src.db_snowflake import apply_common_filters, build_user_options, get_session, load_user_display_map
+from src.utils import order_catalogo
 from src.auth import init_auth, is_authenticated
 
 FQN_APROV = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS"
@@ -23,6 +23,25 @@ def reorder(df: pd.DataFrame, wanted: list[str]) -> pd.DataFrame:
     keep = [c for c in wanted if c in df.columns]
     rest = [c for c in df.columns if c not in keep]
     return df[keep + rest]
+
+def coerce_datetimes(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    for c in cols:
+        if c in df.columns:
+            df[c] = pd.to_datetime(df[c], errors="coerce", utc=False)
+            try:
+                # Se vier timezone-aware, remove o tz para exibir como local
+                if getattr(df[c].dt, "tz", None) is not None:
+                    df[c] = df[c].dt.tz_localize(None)
+            except Exception:
+                pass
+    return df
+
+def build_datetime_column_config(df: pd.DataFrame, cols: list[str]) -> dict:
+    cfg = {}
+    for c in cols:
+        if c in df.columns and pd.api.types.is_datetime64_any_dtype(df[c]):
+            cfg[c] = st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm", disabled=True)
+    return cfg
 
 # ===== Auth & page =====
 init_auth()
@@ -48,30 +67,32 @@ if df.empty:
 
 # Ordenação exigida
 df = reorder(df, ORDER_CATALOGO)
+DT_COLS = ["DATA_CADASTRO", "DATA_APROVACAO", "DATA_VALIDACAO", "DATA_ATUALIZACAO"]
+df = coerce_datetimes(df, DT_COLS)
+dt_cfg = build_datetime_column_config(df, DT_COLS)
+user_map = load_user_display_map(session)
 
-# ===== Filtros =====
-ALL = "— Todos —"
-def unique_opts(s: pd.Series):
-    return [ALL] + sorted([str(x) for x in s.dropna().unique()])
-
-c1, c2, c3 = st.columns(3)
+st.subheader("Filtros")
+c1, c2, c3, c4 = st.columns(4)
 with c1:
-    f_codigo = st.text_input("Código do Produto (exato)", key="cat_f_codigo")
+    sel_user = st.selectbox("Usuário (cadastro)", build_user_options(df, user_map), index=0, key="cat_sel_user")
 with c2:
-    tipos_opts = unique_opts(df.get("TIPO_CODIGO", pd.Series(dtype=str)))
-    sel_tipo = st.selectbox("Tipo do Código", tipos_opts, index=0, key="cat_sel_tipo")
+    f_insumo = st.text_input("Insumo (contém)", key="cat_f_insumo")
 with c3:
-    f_palavra = st.text_input("Palavras-chave (contém)", key="cat_f_palavra")
+    f_codigo = st.text_input("Código do Produto (exato)", key="cat_f_codigo")
+with c4:
+    f_palavra = st.text_input("Palavra-chave (contém)", key="cat_f_palavra")
 
-mask = pd.Series(True, index=df.index)
-if f_codigo:
-    mask &= df.get("CODIGO_PRODUTO", pd.Series("", index=df.index)).astype(str).str.strip().eq(f_codigo.strip())
-if sel_tipo != ALL:
-    mask &= df.get("TIPO_CODIGO", pd.Series("", index=df.index)).astype(str).eq(sel_tipo)
-if f_palavra:
-    mask &= df.get("PALAVRA_CHAVE", pd.Series("", index=df.index)).astype(str).str.contains(f_palavra, case=False, regex=False)
+mask = apply_common_filters(
+    df,
+    sel_user_name=sel_user,
+    f_insumo=f_insumo,
+    f_codigo=f_codigo,
+    f_palavra=f_palavra,
+    user_map=user_map,
+)
 
-df_filtrado = df[mask]
+df_filtrado = df[mask].copy()
 
 # ===== Tabela =====
-st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
+st.dataframe(df_filtrado, use_container_width=True, hide_index=True,  column_config=dt_cfg)

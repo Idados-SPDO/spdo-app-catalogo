@@ -73,15 +73,12 @@ with tab_form:
             else:
                 
                 user = current_user()
-                usuario_atual = user["username"] if user and "username" in user else None
+                usuario_atual = user["name"] if user and "name" in user else None
                 descricao = extrair_valores(especificacao)
                 item_dict = {
                     "REFERENCIA": referencia or None,
-                    "DATA_CADASTRO": data_hoje(),
-                    "DATA_CADASTRO": data_hoje(),
                     "USUARIO_CADASTRO": usuario_atual,
-                    "DATA_ATUALIZACAO": data_hoje(),
-                    "USUARIO_ATUALIZACAO": usuario_atual,
+                    "DATA_CADASTRO": data_hoje(),
                     "GRUPO": grupo,
                     "CATEGORIA": categoria,
                     "SEGMENTO": segmento,
@@ -139,10 +136,9 @@ with tab_excel:
             if c not in df_out.columns:
                 df_out[c] = ""
 
-        df_out = df_out[EXPECTED]  # reordena exatamente
+        df_out = df_out[EXPECTED]
 
-        # Converte tipos onde necessário (mantendo string para validação visual)
-        # QTD_MED -> tentar float; QTD_EMB_COMERCIAL -> int
+
         def to_float_ok(x):
             try:
                 return float(str(x).replace(",", "."))
@@ -190,15 +186,17 @@ with tab_excel:
 
         # --- Botão: Enviar para Snowflake (somente se 0 erros)
         can_upload = not has_errors.any()
-        if st.button("⬆️ Enviar dados para Snowflake", disabled=not can_upload):
+        if st.button("⬆️ Enviar dados", disabled=not can_upload):
             total = len(df_out)
             ok_count, fails = 0, []
-
+            user = current_user()
+            usuario_atual = user["name"] if user and "name" in user else None
+                
             for idx, row in df_out.iterrows():
                 item_dict = {
                     "REFERENCIA": row["REFERENCIA"] or None,
                     "DATA_CADASTRO": data_hoje(),
-                    "DATA_ATUALIZACAO": data_hoje(),
+                    "USUARIO_CADASTRO": usuario_atual,
                     "GRUPO": row["GRUPO"],
                     "CATEGORIA": row["CATEGORIA"],
                     "SEGMENTO": row["SEGMENTO"],
