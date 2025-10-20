@@ -1,4 +1,6 @@
 from __future__ import annotations
+import re
+import unicodedata
 import pandas as pd
 from typing import Any
 import streamlit as st
@@ -24,49 +26,149 @@ def load_user_display_map(session) -> dict[str, str]:
     except Exception:
         return {}
 
-def build_user_options(df: pd.DataFrame, user_map: dict[str,str]) -> list[str]:
-    """
-    Constrói lista de nomes para o dropdown. Se o df tem usernames,
-    converte pra nomes quando possível.
-    """
-    raw = (
-        df.get("USUARIO_CADASTRO", pd.Series(dtype=str))
-          .dropna()
-          .astype(str)
-          .unique()
-          .tolist()
-    )
-    names = sorted({ user_map.get(u, u) for u in raw })  # type: ignore
-    return ["— Todos —"] + names
+ALL = "— Todos —"
 
-def apply_common_filters(df: pd.DataFrame, *, sel_user_name: str, f_insumo: str, f_codigo: str, f_palavra: str, user_map: dict[str,str]) -> pd.Series:
+def _norm_txt(s: str) -> str:
+    if s is None:
+        return ""
+    s = str(s)
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return s.casefold().strip()
+
+def _username_from_email_or_raw(u: str | None) -> str | None:
+    if not u or (isinstance(u, float) and pd.isna(u)):
+        return None
+    u = str(u).strip()
+    # se vier "nome@dominio", pegue só antes do "@"
+    if "@" in u:
+        u = u.split("@", 1)[0]
+    return u
+
+def _build_display_to_usernames(df: pd.DataFrame, user_map: dict | None) -> dict[str, set[str]]:
     """
-    Retorna uma máscara booleana aplicando os 4 filtros.
-    - sel_user_name: nome escolhido no dropdown (ou '— Todos —')
+    Retorna um dicionário: display_norm -> {usernames_norm}
+    Aceita user_map em qualquer direção (username->display ou display->username).
+    Também usa o que está em df['USUARIO_CADASTRO'] para complementar.
     """
+    d2u: dict[str, set[str]] = {}
+
+    def add(display: str | None, username: str | None):
+        if not display or not username:
+            return
+        dn = _norm_txt(display)
+        un = _norm_txt(username)
+        if not dn or not un:
+            return
+        d2u.setdefault(dn, set()).add(un)
+
+    # 1) A partir do user_map (aguenta os 2 sentidos)
+    if isinstance(user_map, dict):
+        for k, v in user_map.items():
+            # caso 1: username -> display
+            un1 = _username_from_email_or_raw(k)
+            if isinstance(v, str):
+                add(v, un1)
+            # caso 2: display -> username
+            un2 = _username_from_email_or_raw(v if isinstance(v, str) else None)
+            if isinstance(k, str) and un2:
+                add(k, un2)
+
+    # 2) Complementa com o que existe no DF
+    if "USUARIO_CADASTRO" in df.columns:
+        for _, row in df[["USUARIO_CADASTRO"]].iterrows():
+            raw_user = row.get("USUARIO_CADASTRO")
+            un = _username_from_email_or_raw(raw_user)
+            # se não houver display no map, use o próprio username como display
+            if un:
+                add(un, un)
+
+    return d2u
+
+def _to_display(v: str, user_map: dict | None) -> str:
+    """
+    Normaliza um valor (username ou display) para display name.
+    Ex.: 'yago.m' -> 'Yago Moraes' se existir no user_map; caso contrário mantém.
+    """
+    if not isinstance(user_map, dict):
+        return v
+    return user_map.get(v, v)
+
+def build_user_options(df: pd.DataFrame, user_map: dict | None) -> list[str]:
+    """
+    Retorna opções únicas de usuários **em display name** para o selectbox,
+    sem duplicatas e já ordenadas alfabeticamente. Inclui a opção ALL.
+    """
+    if "USUARIO_CADASTRO" not in df.columns or df.empty:
+        return [ALL]
+
+    col = (
+        df["USUARIO_CADASTRO"]
+        .astype(str)
+        .str.strip()
+        .replace({"None": "", "nan": ""})
+    )
+
+    # Converte qualquer username para display name usando o mapa
+    col_display = col.map(lambda v: _to_display(v, user_map))
+
+    # Remove vazios, dedup e ordena
+    uniques = sorted({x for x in col_display if x}, key=str.casefold)
+
+    return [ALL, *uniques]
+
+def apply_common_filters(
+    df: pd.DataFrame,
+    *,
+    sel_user_name: str | None = None,
+    f_insumo: str | None = None,
+    f_codigo: str | None = None,
+    f_palavra: str | None = None,
+    user_map: dict | None = None,
+) -> pd.Series:
+    """
+    Retorna uma máscara booleana aplicando:
+      - filtro por usuário (sempre comparando com **display name**),
+      - Insumo, Código do Produto e Palavra-chave (contains, case-insensitive).
+    Se a coluna USUARIO_CADASTRO vier com username, converte para display via user_map.
+    """
+    if df.empty:
+        return pd.Series(False, index=df.index)
+
     mask = pd.Series(True, index=df.index)
 
-    # 1) Usuário (nome → usernames correspondentes)
-    if sel_user_name and sel_user_name != "— Todos —":
-        # caminhar user_map inverso: nomes podem repetir, então aceita múltiplos usernames
-        usernames = [u for u, n in user_map.items() if n == sel_user_name]
-        if not usernames:
-            # se não achou no map, pode ser que o df já tenha o próprio nome
-            mask &= df.get("USUARIO_CADASTRO", pd.Series("", index=df.index)).astype(str).eq(sel_user_name)
-        else:
-            mask &= df.get("USUARIO_CADASTRO", pd.Series("", index=df.index)).astype(str).isin(usernames)
+    # ---------- Filtro por usuário (sempre display name) ----------
+    if "USUARIO_CADASTRO" in df.columns and sel_user_name and sel_user_name != ALL:
+        col_user = (
+            df["USUARIO_CADASTRO"]
+            .astype(str)
+            .str.strip()
+            .replace({"None": "", "nan": ""})
+        )
+        # Normaliza a coluna para display name usando o mapa (corrige casos com username)
+        col_user_display = col_user.map(lambda v: _to_display(v, user_map)).fillna("")
+        mask &= col_user_display.str.casefold() == str(sel_user_name).casefold()
 
-    # 2) Insumo (contém, case-insensitive) — pode trocar pra exato se preferir
+    # ---------- Filtro por Insumo ----------
     if f_insumo:
-        mask &= df.get("INSUMO", pd.Series("", index=df.index)).astype(str).str.contains(f_insumo, case=False, regex=False)
+        if "INSUMO" in df.columns:
+            mask &= df["INSUMO"].astype(str).str.contains(str(f_insumo), case=False, na=False)
 
-    # 3) Código do produto (exato)
+    # ---------- Filtro por Código do Produto (exato ou contém) ----------
     if f_codigo:
-        mask &= df.get("CODIGO_PRODUTO", pd.Series("", index=df.index)).astype(str).str.strip().eq(f_codigo.strip())
+        if "CODIGO_PRODUTO" in df.columns:
+            # permite 'contém' porque pode haver zeros à esquerda, etc.
+            mask &= df["CODIGO_PRODUTO"].astype(str).str.contains(str(f_codigo), case=False, na=False)
 
-    # 4) Palavra-chave (contém)
+    # ---------- Filtro por Palavra-chave (em várias colunas: PALAVRA_CHAVE, SINONIMO, DESCRICAO) ----------
     if f_palavra:
-        mask &= df.get("PALAVRA_CHAVE", pd.Series("", index=df.index)).astype(str).str.contains(f_palavra, case=False, regex=False)
+        needles = str(f_palavra)
+        cols_busca = [c for c in ["PALAVRA_CHAVE", "SINONIMO", "DESCRICAO", "ITEM", "ESPECIFICACAO"] if c in df.columns]
+        if cols_busca:
+            any_col = pd.Series(False, index=df.index)
+            for c in cols_busca:
+                any_col |= df[c].astype(str).str.contains(needles, case=False, na=False)
+            mask &= any_col
 
     return mask
 
@@ -99,7 +201,7 @@ def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
 
     placeholders = ", ".join([f":{i+1}" for i in range(len(cols))])
     sql = f"""
-        INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS
+        INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS_H
         ({", ".join(cols)}, DATA_CADASTRO)
         VALUES ({placeholders}, CURRENT_TIMESTAMP())
     """
@@ -116,7 +218,7 @@ def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
 
 def listar_itens_df(session: Session) -> pd.DataFrame:
     try:
-        t = session.table("BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS")
+        t = session.table("BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS_H")
         excluir = {"DATA_VALIDACAO", "USUARIO_VALIDADOR", "DATA_ATUALIZACAO", "USUARIO_ATUALIZACAO"}
         cols = [f.name for f in t.schema.fields if f.name not in excluir]
         return t.select(cols).sort("DATA_CADASTRO", ascending=False).to_pandas()
@@ -210,7 +312,7 @@ def fetch_row_snapshot(session, table_fqn: str, item_id: int):
 
 def log_validacao(session, *, item_id, codigo_produto, origem, destino, obs, user):
     sql = f"""
-      INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_LOG_VALIDACAO
+      INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_LOG_VALIDACAO_H
       (ITEM_ID, CODIGO_PRODUTO, ORIGEM_TABELA, DESTINO_TABELA, OBSERVACAO, APROVADO_POR_USER, APROVADO_POR_NOME)
       SELECT ?, ?, ?, ?, ?, ?, ?
     """
@@ -222,7 +324,7 @@ def log_validacao(session, *, item_id, codigo_produto, origem, destino, obs, use
 
 def log_reprovacao(session, *, item_id, codigo_produto, origem, destino, motivo, user):
     sql = f"""
-      INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_LOG_REPROVACAO
+      INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_LOG_REPROVACAO_H
       (ITEM_ID, CODIGO_PRODUTO, ORIGEM_TABELA, DESTINO_TABELA, MOTIVO, REPROVADO_POR_USER, REPROVADO_POR_NOME)
       SELECT ?, ?, ?, ?, ?, ?, ?
     """
@@ -234,7 +336,7 @@ def log_reprovacao(session, *, item_id, codigo_produto, origem, destino, motivo,
 
 def log_atualizacao(session, *, item_id, codigo_produto, colunas_alteradas, before_obj, after_obj, user):
     sql = f"""
-      INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_LOG_ATUALIZACAO
+      INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_LOG_ATUALIZACAO_H
       (ITEM_ID, CODIGO_PRODUTO, COLUNAS_ALTERADAS, BEFORE_SNAPSHOT, AFTER_SNAPSHOT, ATUALIZADO_POR_USER, ATUALIZADO_POR_NOME)
       SELECT ?, ?, {_sql_array(colunas_alteradas)}, {_sql_json(before_obj)}, {_sql_json(after_obj)}, ?, ?
     """

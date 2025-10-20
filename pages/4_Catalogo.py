@@ -5,7 +5,7 @@ from src.db_snowflake import apply_common_filters, build_user_options, get_sessi
 from src.utils import order_catalogo
 from src.auth import init_auth, is_authenticated
 
-FQN_APROV = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS"
+FQN_APROV = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS_H"
 
 # ===== Helpers =====
 ORDER_CATALOGO = [
@@ -95,4 +95,6 @@ mask = apply_common_filters(
 df_filtrado = df[mask].copy()
 
 # ===== Tabela =====
-st.dataframe(df_filtrado, use_container_width=True, hide_index=True,  column_config=dt_cfg)
+st.caption(f"Itens no catalogo: **{len(df_filtrado)}**")
+
+st.dataframe(df_filtrado, width="stretch", hide_index=True,  column_config=dt_cfg)

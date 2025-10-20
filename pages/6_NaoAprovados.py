@@ -12,9 +12,9 @@ if not is_authenticated():
 user = current_user()
 session = get_session()
 
-FQN_MAIN  = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS"
-FQN_COR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_CORRECOES"
-FQN_APR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS"
+FQN_MAIN  = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS_H"
+FQN_COR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_CORRECOES_H"
+FQN_APR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS_H"
 
 ORDER_CORRECOES = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
@@ -159,7 +159,7 @@ def resend_to_validacao(session, edited_df: pd.DataFrame, ids: list[int], user: 
 try:
         cnt = session.sql(f"SELECT COUNT(*) AS N FROM {FQN_COR}").collect()[0]["N"]
         st.caption(f"Total reprovados no banco: **{cnt}**")
-
+        
         df_cor = session.sql(f"""
             SELECT * EXCLUDE (DATA_ATUALIZACAO, USUARIO_ATUALIZACAO)
             FROM {FQN_COR}
@@ -198,12 +198,19 @@ else:
 
         df_cor_view = df_cor[mask_cor].copy()
 
-        df_cor_view = df_cor[mask_cor].copy()
+
+
         if df_cor_view.empty:
             st.info("Nenhum item com os filtros aplicados.")
         else:
             if "Selecionar" not in df_cor_view.columns:
                 df_cor_view.insert(0, "Selecionar", False)
+            
+            left_sel_cor, right_sel_cor = st.columns([1, 3])
+            with left_sel_cor:
+                select_all_cor = st.checkbox("Selecionar todos", key="cor_select_all")
+            if select_all_cor:
+                df_cor_view["Selecionar"] = True
 
             DT_COLS_COR = ["DATA_REPROVACAO", "DATA_CADASTRO"]
             df_cor_view = coerce_datetimes(df_cor_view, DT_COLS_COR)
@@ -225,7 +232,7 @@ else:
                 df_cor_view,
                 num_rows="fixed",
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 key="editor_correcao_page",
                 column_config=col_cfg_cor,
             )

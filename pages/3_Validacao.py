@@ -6,9 +6,9 @@ from src.auth import init_auth, is_authenticated, current_user
 # ==============================
 # Constantes / Config
 # ==============================
-FQN_MAIN  = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS"
-FQN_COR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_CORRECOES"
-FQN_APR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS"
+FQN_MAIN  = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS_H"
+FQN_COR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_CORRECOES_H"
+FQN_APR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS_H"
 
 ORDER_VALIDACAO = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
@@ -299,7 +299,12 @@ else:
         st.subheader("Filtros")
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            sel_user = st.selectbox("Usuário", build_user_options(df, user_map), index=0, key="val_sel_user")
+            sel_user = st.selectbox(
+            "Usuário",
+            build_user_options(df, user_map),  # <- retorna só labels legíveis
+            index=0,
+            key="val_sel_user"
+        )
         with c2:
             f_insumo = st.text_input("Insumo", key="val_f_insumo")
         with c3:
@@ -309,7 +314,7 @@ else:
 
         mask = apply_common_filters(
             df,
-            sel_user_name=sel_user,
+            sel_user_name=sel_user,   # <- passa o *nome de exibição* selecionado
             f_insumo=f_insumo,
             f_codigo=f_codigo,
             f_palavra=f_palavra,
@@ -322,8 +327,14 @@ else:
             ids_sel = []
         else:
             # coluna de ação
+            st.caption(f"Itens para validação no banco: **{len(df_view)}**")
             if "Validar" not in df_view.columns:
                 df_view.insert(0, "Validar", False)
+            left_sel, right_sel = st.columns([1, 3])
+            with left_sel:
+                select_all_val = st.checkbox("Selecionar todos", key="val_select_all")
+            if select_all_val:
+                df_view["Validar"] = True
 
             # datas formatadas
             DT_COLS_VAL = ["DATA_CADASTRO"]
@@ -349,10 +360,11 @@ else:
                 df_view,
                 num_rows="fixed",
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 key="editor_validacao",
-                column_config=col_cfg_all,   # <- só "Validar" fica editável
-            )
+                column_config=col_cfg_all,
+                column_order=list(df_view.columns) 
+            ) # type: ignore
 
             sel_mask = edited["Validar"] == True
             ids_sel = edited.loc[sel_mask, "ID"].tolist()

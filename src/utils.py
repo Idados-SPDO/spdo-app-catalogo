@@ -5,6 +5,8 @@ from io import BytesIO
 from typing import Iterable, List
 import io
 import pandas as pd
+import unicodedata
+import streamlit as st
 
 PT_DATE_FMT = "%d/%m/%Y"
 
@@ -84,8 +86,9 @@ def gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb
         sinonimo = (sinonimo + " COMERCIALIZADO EM " + emb_produto).strip()
 
     try:
+        ### 
         if (qtd_emb_comercial not in (None, "", 1)) and emb_comercial:
-            sinonimo = (sinonimo + f" COM {emb_comercial} UNIDADES").strip()
+            sinonimo = (sinonimo + f" COM {qtd_emb_comercial} {emb_comercial}").strip()
     except Exception:
         pass
 

@@ -2,7 +2,7 @@ import pandas as pd
 import streamlit as st
 from src.db_snowflake import get_session, insert_item
 from src.utils import data_hoje, extrair_valores, campos_obrigatorios_ok, gerar_sinonimo, gerar_palavra_chave, _pick, _to_float_safe, _to_int_safe, gerar_template_excel_catalogo
-
+from io import BytesIO
 from src.auth import init_auth, is_authenticated, current_user
 
 init_auth()
@@ -174,25 +174,59 @@ with tab_excel:
 
         st.success("Pré-visualização (nada foi salvo ainda).")
         st.write(f"**{len(df_out):,}** linha(s) × **{len(df_out.columns):,}** coluna(s).")
-        st.dataframe(df_out.head(200), use_container_width=True)
-
-        if has_errors.any():
-            n_err = int(has_errors.sum())
-            st.error(f"⚠️ Existem {n_err} linha(s) com campos obrigatórios faltando/invalidos.")
-            with st.expander("Ver apenas linhas com erro"):
-                st.dataframe(df_out.loc[has_errors].head(500), use_container_width=True)
+        st.dataframe(df_out.head(200), width="stretch")
 
         st.markdown("---")
 
-        # --- Botão: Enviar para Snowflake (somente se 0 erros)
-        can_upload = not has_errors.any()
-        if st.button("⬆️ Enviar dados", disabled=not can_upload):
-            total = len(df_out)
+        # --- máscaras de validade
+        valid_mask = ~(has_errors)
+        df_valid = df_out.loc[valid_mask].copy()
+        df_errors = df_out.loc[has_errors].copy()
+
+        # --- Download do Excel com erros (se houver)
+        if not df_errors.empty:
+            st.error(f"⚠️ Existem {int(has_errors.sum())} linha(s) com campos obrigatórios faltando/inválidos.")
+            with st.expander("Ver apenas linhas com erro"):
+                st.dataframe(df_errors.head(500), width="stretch")
+
+            # (opcional) numera a linha original do Excel visualmente (1 = cabeçalho, então +2)
+            df_errors.insert(0, "__LINHA_EXCEL__", df_errors.reset_index().index + 2)
+
+            
+            buf = BytesIO()
+            with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+                df_errors.to_excel(w, index=False, sheet_name="Erros")
+            st.download_button(
+                "⬇️ Baixar planilha com erros",
+                data=buf.getvalue(),
+                file_name="catalogo_erros.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.success("✅ Nenhum erro encontrado no arquivo.")
+
+        # --- Botão: Enviar apenas as linhas válidas
+        #     (fica desabilitado apenas se NÃO houver linhas válidas)
+        can_upload_some = not df_valid.empty
+        if st.button("⬆️ Enviar apenas linhas válidas", disabled=not can_upload_some):
+            total_valid = len(df_valid)
             ok_count, fails = 0, []
             user = current_user()
             usuario_atual = user["name"] if user and "name" in user else None
-                
-            for idx, row in df_out.iterrows():
+
+            def to_float_ok(x):
+                try:
+                    return float(str(x).replace(",", "."))
+                except:
+                    return None
+
+            def to_int_ok(x):
+                try:
+                    return int(float(str(x)))
+                except:
+                    return None
+
+            for idx, row in df_valid.iterrows():
                 item_dict = {
                     "REFERENCIA": row["REFERENCIA"] or None,
                     "DATA_CADASTRO": data_hoje(),
@@ -236,15 +270,22 @@ with tab_excel:
                 }
 
                 ok, msg = insert_item(session, item_dict)
-                if ok: ok_count += 1
-                else:  fails.append((idx, msg))
+                if ok:
+                    ok_count += 1
+                else:
+                    # guarda a linha (1-based para humano) + mensagem de erro
+                    fails.append((idx + 2, msg))  # type: ignore # +2: cabeçalho + base 1
 
-            if ok_count == total:
-                st.success(f"✅ Todos os {ok_count} registro(s) foram inseridos com sucesso.")
+            if ok_count == total_valid:
+                st.success(f"✅ Inseridos {ok_count}/{total_valid} registros válidos.")
             else:
-                st.warning(f"Parcial: {ok_count}/{total} inseridos. {len(fails)} falharam.")
-                with st.expander("Ver erros de inserção"):
-                    for i, err in fails:
-                        st.write(f"Linha {i+1}: {err}")
+                st.warning(f"Parcial: {ok_count}/{total_valid} válidos inseridos. {len(fails)} falharam.")
+                with st.expander("Ver erros de inserção (linhas válidas)"):
+                    for linha_excel, err in fails:
+                        st.write(f"Linha {linha_excel}: {err}")
+
+        # informação quando não há válidos
+        if df_valid.empty:
+            st.info("Nenhuma linha válida para inserir (corrija o Excel de erros e tente novamente).")
     else:
         st.info("Nenhum arquivo carregado ainda.")

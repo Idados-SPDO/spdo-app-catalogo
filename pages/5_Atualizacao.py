@@ -4,7 +4,7 @@ from src.db_snowflake import apply_common_filters, build_user_options, get_sessi
 from src.auth import init_auth, is_authenticated, current_user
 from src.utils import extrair_valores, gerar_sinonimo, gerar_palavra_chave
 
-FQN_APROV = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS"  # <- fonte/destino
+FQN_APROV = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS_H" 
 
 init_auth()
 if not is_authenticated():
@@ -104,11 +104,12 @@ lock_cols = [
     "ID","DATA_CADASTRO","USUARIO_CADASTRO"
 ]
 disabled_cols = [c for c in lock_cols if c in df_view.columns]
+st.caption(f"Itens para validar no banco: **{len(df_view)}**")
 
 edited = st.data_editor(
     df_view,
     num_rows="fixed",
-    use_container_width=True,
+    width="stretch",
     hide_index=True,
     disabled=disabled_cols,
     column_config={
