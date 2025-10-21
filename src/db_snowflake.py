@@ -187,25 +187,44 @@ def get_session() -> Session:
 # DDL/CRUD
 # =========================
 
-def codigo_produto_exists(session: Session, codigo: str | None) -> bool:
+def codigo_produto_exists_any(session: Session, codigo: str | None) -> tuple[bool, str]:
+    """
+    Verifica se o CODIGO_PRODUTO existe em alguma tabela “ativa”:
+    - TB_CATALOGO_APROVADOS_H (aprovados)
+    - TB_CATALOGO_INSUMOS_H   (cadastros pendentes/histórico)
+    Retorna (existe, origem) onde origem ∈ {"APROVADOS", "PENDENTES", ""}.
+    """
     if not codigo:
-        return False
-    q = """
+        return (False, "")
+    codigo = str(codigo).strip()
+    # 1) Aprovados primeiro (tem prioridade de bloqueio)
+    q1 = """
+      SELECT 1
+      FROM BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS_H
+      WHERE CODIGO_PRODUTO = ?
+      LIMIT 1
+    """
+    if not session.sql(q1, params=[codigo]).to_pandas().empty:
+        return (True, "APROVADOS")
+
+    # 2) Pendentes (insumos_h)
+    q2 = """
       SELECT 1
       FROM BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS_H
       WHERE CODIGO_PRODUTO = ?
       LIMIT 1
     """
-    df = session.sql(q, params=[str(codigo).strip()]).to_pandas()
-    return not df.empty
+    if not session.sql(q2, params=[codigo]).to_pandas().empty:
+        return (True, "PENDENTES")
 
+    return (False, "")
 
 def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
     # Colunas que serão ligadas por parâmetro (sem as datas!)
     codigo = (item.get("CODIGO_PRODUTO") or "").strip()
     if not codigo:
         return False, "CODIGO_PRODUTO é obrigatório."
-    if codigo_produto_exists(session, codigo):
+    if codigo_produto_exists_any(session, codigo):
         return False, f"CODIGO_PRODUTO '{codigo}' já existe na base."
     cols = [
         "REFERENCIA",
@@ -366,30 +385,41 @@ def log_atualizacao(session, *, item_id, codigo_produto, colunas_alteradas, befo
 
 
 # --- add acima (próximo das outras funções) ---
-def fetch_existing_codigos(session: Session, codigos: list[str]) -> set[str]:
+def fetch_existing_codigos_dual(session: Session, codigos: list[str]) -> tuple[set[str], set[str]]:
     """
-    Retorna o conjunto de CODIGO_PRODUTO que JÁ EXISTEM na base,
-    dentre a lista fornecida (case-insensitive). Mantemos comparação textual.
+    Retorna 2 conjuntos:
+      - exist_pend: códigos que existem em TB_CATALOGO_INSUMOS_H
+      - exist_aprv: códigos que existem em TB_CATALOGO_APROVADOS_H
     """
     if not codigos:
-        return set()
-    # remove vazios
+        return set(), set()
+
     codigos = [c for c in {str(x).strip() for x in codigos} if c]
-    # evita query muito grande em IN (quebra em chunks de 1000)
     CHUNK = 1000
-    found: set[str] = set()
+
+    exist_pend: set[str] = set()
+    exist_aprv: set[str] = set()
+
     for i in range(0, len(codigos), CHUNK):
         chunk = codigos[i:i+CHUNK]
-        # usa parâmetros para escapar
         placeholders = ", ".join(["?"] * len(chunk))
-        q = f"""
+
+        q_pend = f"""
           SELECT DISTINCT CODIGO_PRODUTO
           FROM BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS_H
           WHERE CODIGO_PRODUTO IN ({placeholders})
         """
-        df = session.sql(q, params=chunk).to_pandas()
-        if not df.empty:
-            found |= {str(x).strip() for x in df["CODIGO_PRODUTO"].astype(str).tolist()}
-    return found
+        df1 = session.sql(q_pend, params=chunk).to_pandas()
+        if not df1.empty:
+            exist_pend |= {str(x).strip() for x in df1["CODIGO_PRODUTO"].astype(str).tolist()}
 
+        q_aprv = f"""
+          SELECT DISTINCT CODIGO_PRODUTO
+          FROM BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS_H
+          WHERE CODIGO_PRODUTO IN ({placeholders})
+        """
+        df2 = session.sql(q_aprv, params=chunk).to_pandas()
+        if not df2.empty:
+            exist_aprv |= {str(x).strip() for x in df2["CODIGO_PRODUTO"].astype(str).tolist()}
 
+    return exist_pend, exist_aprv

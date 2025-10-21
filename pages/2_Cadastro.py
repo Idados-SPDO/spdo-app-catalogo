@@ -1,6 +1,6 @@
 import pandas as pd
 import streamlit as st
-from src.db_snowflake import codigo_produto_exists, fetch_existing_codigos, get_session, insert_item
+from src.db_snowflake import codigo_produto_exists_any, fetch_existing_codigos_dual, get_session, insert_item
 from src.utils import data_hoje, extrair_valores, campos_obrigatorios_ok, gerar_sinonimo, gerar_palavra_chave, _pick, _to_float_safe, _to_int_safe, gerar_template_excel_catalogo
 from io import BytesIO
 from src.auth import init_auth, is_authenticated, current_user
@@ -111,8 +111,12 @@ with tab_form:
                     "PALAVRA_CHAVE": gerar_palavra_chave(subfamilia, item, marca, emb_produto, qtd_med, un_med, familia),
                 }
                 codigo_norm = (codigo_produto or "").strip()
-                if codigo_produto_exists(session, codigo_norm):
-                    st.error(f"CODIGO_PRODUTO '{codigo_norm}' já existe na base. Ajuste e tente novamente.")
+                exists, origem = codigo_produto_exists_any(session, codigo_norm)
+                if exists:
+                    if origem == "APROVADOS":
+                        st.error(f"CODIGO_PRODUTO '{codigo_norm}' já está APROVADO. Não é permitido novo cadastro.")
+                    else:
+                        st.error(f"CODIGO_PRODUTO '{codigo_norm}' já existe em pendências. Ajuste e tente novamente.")
                 else:
                     ok, msg = insert_item(session, item_dict)
                     st.success(msg) if ok else st.error(msg)
@@ -180,9 +184,10 @@ with tab_excel:
 
         # 3.2) Duplicados NA BASE (apenas para códigos não vazios)
         codigos_unicos_arquivo = sorted({c for c in df_out["CODIGO_PRODUTO"].tolist() if str(c).strip()})
-        existentes_base = fetch_existing_codigos(session, codigos_unicos_arquivo)
-        dups_in_db_mask = df_out["CODIGO_PRODUTO"].isin(existentes_base)
+        exist_pend, exist_aprv = fetch_existing_codigos_dual(session, codigos_unicos_arquivo)
 
+        dups_in_db_pend_mask = df_out["CODIGO_PRODUTO"].isin(exist_pend)
+        dups_in_db_aprv_mask = df_out["CODIGO_PRODUTO"].isin(exist_aprv)
         # Cria coluna de erros por linha
         missing_list = []
         motivos_dup = []
@@ -199,7 +204,10 @@ with tab_excel:
         df_out["EXPLICAÇÃO"] = missing_list
         append_reason(df_out, dups_in_file_mask, "CODIGO_PRODUTO duplicado no arquivo")
 
-        append_reason(df_out, dups_in_db_mask, "CODIGO_PRODUTO já existe na base")
+        append_reason(df_out, dups_in_db_aprv_mask, "CODIGO_PRODUTO já existe em APROVADOS")
+
+        append_reason(df_out, dups_in_db_pend_mask, "CODIGO_PRODUTO já existe em PENDENTES")
+
         has_errors = df_out["EXPLICAÇÃO"].str.strip() != ""
 
         st.success("Pré-visualização (nada foi salvo ainda).")
