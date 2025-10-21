@@ -187,8 +187,26 @@ def get_session() -> Session:
 # DDL/CRUD
 # =========================
 
+def codigo_produto_exists(session: Session, codigo: str | None) -> bool:
+    if not codigo:
+        return False
+    q = """
+      SELECT 1
+      FROM BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS_H
+      WHERE CODIGO_PRODUTO = ?
+      LIMIT 1
+    """
+    df = session.sql(q, params=[str(codigo).strip()]).to_pandas()
+    return not df.empty
+
+
 def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
     # Colunas que serão ligadas por parâmetro (sem as datas!)
+    codigo = (item.get("CODIGO_PRODUTO") or "").strip()
+    if not codigo:
+        return False, "CODIGO_PRODUTO é obrigatório."
+    if codigo_produto_exists(session, codigo):
+        return False, f"CODIGO_PRODUTO '{codigo}' já existe na base."
     cols = [
         "REFERENCIA",
         "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
@@ -345,3 +363,33 @@ def log_atualizacao(session, *, item_id, codigo_produto, colunas_alteradas, befo
         (user or {}).get("username"), (user or {}).get("name"),
     ]
     session.sql(sql, params=params).collect()
+
+
+# --- add acima (próximo das outras funções) ---
+def fetch_existing_codigos(session: Session, codigos: list[str]) -> set[str]:
+    """
+    Retorna o conjunto de CODIGO_PRODUTO que JÁ EXISTEM na base,
+    dentre a lista fornecida (case-insensitive). Mantemos comparação textual.
+    """
+    if not codigos:
+        return set()
+    # remove vazios
+    codigos = [c for c in {str(x).strip() for x in codigos} if c]
+    # evita query muito grande em IN (quebra em chunks de 1000)
+    CHUNK = 1000
+    found: set[str] = set()
+    for i in range(0, len(codigos), CHUNK):
+        chunk = codigos[i:i+CHUNK]
+        # usa parâmetros para escapar
+        placeholders = ", ".join(["?"] * len(chunk))
+        q = f"""
+          SELECT DISTINCT CODIGO_PRODUTO
+          FROM BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS_H
+          WHERE CODIGO_PRODUTO IN ({placeholders})
+        """
+        df = session.sql(q, params=chunk).to_pandas()
+        if not df.empty:
+            found |= {str(x).strip() for x in df["CODIGO_PRODUTO"].astype(str).tolist()}
+    return found
+
+

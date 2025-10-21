@@ -88,7 +88,7 @@ def gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb
     try:
         ### 
         if (qtd_emb_comercial not in (None, "", 1)) and emb_comercial:
-            sinonimo = (sinonimo + f" COM {qtd_emb_comercial} {emb_comercial}").strip()
+            sinonimo = (sinonimo + f" COM {qtd_emb_comercial} {emb_comercial}S").strip()
     except Exception:
         pass
 

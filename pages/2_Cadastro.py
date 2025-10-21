@@ -1,9 +1,10 @@
 import pandas as pd
 import streamlit as st
-from src.db_snowflake import get_session, insert_item
+from src.db_snowflake import codigo_produto_exists, fetch_existing_codigos, get_session, insert_item
 from src.utils import data_hoje, extrair_valores, campos_obrigatorios_ok, gerar_sinonimo, gerar_palavra_chave, _pick, _to_float_safe, _to_int_safe, gerar_template_excel_catalogo
 from io import BytesIO
 from src.auth import init_auth, is_authenticated, current_user
+import numpy as np
 
 init_auth()
 if not is_authenticated():
@@ -13,6 +14,16 @@ if not is_authenticated():
 st.set_page_config(page_title="Catálogo • Cadastro", layout="wide")
 st.title("📝 Cadastro de Insumos")
 
+
+def append_reason(df: pd.DataFrame, mask: pd.Series, reason: str) -> None:
+    """Concatena 'reason' na coluna EXPLICAÇÃO apenas nas linhas do mask,
+    adicionando vírgula quando já existirem erros anteriores (vetorizado)."""
+    s = df.loc[mask, "EXPLICAÇÃO"].astype(str).fillna("").str.strip()
+    df.loc[mask, "EXPLICAÇÃO"] = np.where(
+        s != "",
+        s + ", " + reason,
+        reason
+    )
 
 session = get_session()
 
@@ -99,8 +110,12 @@ with tab_form:
                     "SINONIMO": gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb_comercial, emb_comercial),
                     "PALAVRA_CHAVE": gerar_palavra_chave(subfamilia, item, marca, emb_produto, qtd_med, un_med, familia),
                 }
-                ok, msg = insert_item(session, item_dict)
-                st.success(msg) if ok else st.error(msg)
+                codigo_norm = (codigo_produto or "").strip()
+                if codigo_produto_exists(session, codigo_norm):
+                    st.error(f"CODIGO_PRODUTO '{codigo_norm}' já existe na base. Ajuste e tente novamente.")
+                else:
+                    ok, msg = insert_item(session, item_dict)
+                    st.success(msg) if ok else st.error(msg)
 
 # =========================
 # 2) LEITOR EXCEL (somente leitura no preview; com botão para subir para Snowflake)
@@ -158,19 +173,34 @@ with tab_excel:
             "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
         ]
 
+        df_out["CODIGO_PRODUTO"] = df_out["CODIGO_PRODUTO"].astype(str).str.strip()
+
+        # 3.1) Duplicados DENTRO DO ARQUIVO
+        dups_in_file_mask = df_out.duplicated(subset=["CODIGO_PRODUTO"], keep=False) & (df_out["CODIGO_PRODUTO"] != "")
+
+        # 3.2) Duplicados NA BASE (apenas para códigos não vazios)
+        codigos_unicos_arquivo = sorted({c for c in df_out["CODIGO_PRODUTO"].tolist() if str(c).strip()})
+        existentes_base = fetch_existing_codigos(session, codigos_unicos_arquivo)
+        dups_in_db_mask = df_out["CODIGO_PRODUTO"].isin(existentes_base)
+
         # Cria coluna de erros por linha
         missing_list = []
+        motivos_dup = []
         for _, row in df_out.iterrows():
             miss = [c for c in REQUIRED if str(row[c]).strip() == ""]
-            # Valida também coerção numérica:
+            # coerção numérica
             if "QTD_MED" in row and str(row["QTD_MED"]).strip() != "" and to_float_ok(row["QTD_MED"]) is None:
                 miss.append("QTD_MED (inválido)")
             if "QTD_EMB_COMERCIAL" in row and str(row["QTD_EMB_COMERCIAL"]).strip() != "" and to_int_ok(row["QTD_EMB_COMERCIAL"]) is None:
                 miss.append("QTD_EMB_COMERCIAL (inválido)")
             missing_list.append(", ".join(miss))
+            motivos_dup.append("") 
 
-        df_out["__ERROS__"] = missing_list
-        has_errors = df_out["__ERROS__"].str.strip() != ""
+        df_out["EXPLICAÇÃO"] = missing_list
+        append_reason(df_out, dups_in_file_mask, "CODIGO_PRODUTO duplicado no arquivo")
+
+        append_reason(df_out, dups_in_db_mask, "CODIGO_PRODUTO já existe na base")
+        has_errors = df_out["EXPLICAÇÃO"].str.strip() != ""
 
         st.success("Pré-visualização (nada foi salvo ainda).")
         st.write(f"**{len(df_out):,}** linha(s) × **{len(df_out.columns):,}** coluna(s).")
@@ -185,14 +215,13 @@ with tab_excel:
 
         # --- Download do Excel com erros (se houver)
         if not df_errors.empty:
-            st.error(f"⚠️ Existem {int(has_errors.sum())} linha(s) com campos obrigatórios faltando/inválidos.")
+            st.error(f"⚠️ Existem {int(has_errors.sum())} linha(s) com problemas (obrigatórios/numéricos/duplicidades).")
             with st.expander("Ver apenas linhas com erro"):
                 st.dataframe(df_errors.head(500), width="stretch")
 
-            # (opcional) numera a linha original do Excel visualmente (1 = cabeçalho, então +2)
+            # numeração da linha original do Excel (2 = cabeçalho + índice base-1)
             df_errors.insert(0, "__LINHA_EXCEL__", df_errors.reset_index().index + 2)
 
-            
             buf = BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
                 df_errors.to_excel(w, index=False, sheet_name="Erros")
@@ -273,7 +302,6 @@ with tab_excel:
                 if ok:
                     ok_count += 1
                 else:
-                    # guarda a linha (1-based para humano) + mensagem de erro
                     fails.append((idx + 2, msg))  # type: ignore # +2: cabeçalho + base 1
 
             if ok_count == total_valid:
