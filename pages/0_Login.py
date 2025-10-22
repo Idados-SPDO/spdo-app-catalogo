@@ -36,7 +36,7 @@ else:
     # --- Formulário de login (apenas senha + botão) ---
     with st.form("login_form"):
         senha_login = st.text_input("Senha", type="password", key="login_pwd_curr")
-        submitted_login = st.form_submit_button("Entrar", use_container_width=True)
+        submitted_login = st.form_submit_button("Entrar", width="stretch")
 
     if submitted_login:
         u = (username_login or "").strip()

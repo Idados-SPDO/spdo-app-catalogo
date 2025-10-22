@@ -1,9 +1,10 @@
 import pandas as pd
 import streamlit as st
-from src.db_snowflake import get_session, insert_item
+from src.db_snowflake import codigo_produto_exists_any, fetch_existing_codigos_dual, get_session, insert_item
 from src.utils import data_hoje, extrair_valores, campos_obrigatorios_ok, gerar_sinonimo, gerar_palavra_chave, _pick, _to_float_safe, _to_int_safe, gerar_template_excel_catalogo
-
+from io import BytesIO
 from src.auth import init_auth, is_authenticated, current_user
+import numpy as np
 
 init_auth()
 if not is_authenticated():
@@ -13,6 +14,16 @@ if not is_authenticated():
 st.set_page_config(page_title="Catálogo • Cadastro", layout="wide")
 st.title("📝 Cadastro de Insumos")
 
+
+def append_reason(df: pd.DataFrame, mask: pd.Series, reason: str) -> None:
+    """Concatena 'reason' na coluna EXPLICAÇÃO apenas nas linhas do mask,
+    adicionando vírgula quando já existirem erros anteriores (vetorizado)."""
+    s = df.loc[mask, "EXPLICAÇÃO"].astype(str).fillna("").str.strip()
+    df.loc[mask, "EXPLICAÇÃO"] = np.where(
+        s != "",
+        s + ", " + reason,
+        reason
+    )
 
 session = get_session()
 
@@ -99,8 +110,16 @@ with tab_form:
                     "SINONIMO": gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb_comercial, emb_comercial),
                     "PALAVRA_CHAVE": gerar_palavra_chave(subfamilia, item, marca, emb_produto, qtd_med, un_med, familia),
                 }
-                ok, msg = insert_item(session, item_dict)
-                st.success(msg) if ok else st.error(msg)
+                codigo_norm = (codigo_produto or "").strip()
+                exists, origem = codigo_produto_exists_any(session, codigo_norm)
+                if exists:
+                    if origem == "APROVADOS":
+                        st.error(f"CODIGO_PRODUTO '{codigo_norm}' já está APROVADO. Não é permitido novo cadastro.")
+                    else:
+                        st.error(f"CODIGO_PRODUTO '{codigo_norm}' já existe em pendências. Ajuste e tente novamente.")
+                else:
+                    ok, msg = insert_item(session, item_dict)
+                    st.success(msg) if ok else st.error(msg)
 
 # =========================
 # 2) LEITOR EXCEL (somente leitura no preview; com botão para subir para Snowflake)
@@ -158,41 +177,93 @@ with tab_excel:
             "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
         ]
 
+        df_out["CODIGO_PRODUTO"] = df_out["CODIGO_PRODUTO"].astype(str).str.strip()
+
+        # 3.1) Duplicados DENTRO DO ARQUIVO
+        dups_in_file_mask = df_out.duplicated(subset=["CODIGO_PRODUTO"], keep=False) & (df_out["CODIGO_PRODUTO"] != "")
+
+        # 3.2) Duplicados NA BASE (apenas para códigos não vazios)
+        codigos_unicos_arquivo = sorted({c for c in df_out["CODIGO_PRODUTO"].tolist() if str(c).strip()})
+        exist_pend, exist_aprv = fetch_existing_codigos_dual(session, codigos_unicos_arquivo)
+
+        dups_in_db_pend_mask = df_out["CODIGO_PRODUTO"].isin(exist_pend)
+        dups_in_db_aprv_mask = df_out["CODIGO_PRODUTO"].isin(exist_aprv)
         # Cria coluna de erros por linha
         missing_list = []
+        motivos_dup = []
         for _, row in df_out.iterrows():
             miss = [c for c in REQUIRED if str(row[c]).strip() == ""]
-            # Valida também coerção numérica:
+            # coerção numérica
             if "QTD_MED" in row and str(row["QTD_MED"]).strip() != "" and to_float_ok(row["QTD_MED"]) is None:
                 miss.append("QTD_MED (inválido)")
             if "QTD_EMB_COMERCIAL" in row and str(row["QTD_EMB_COMERCIAL"]).strip() != "" and to_int_ok(row["QTD_EMB_COMERCIAL"]) is None:
                 miss.append("QTD_EMB_COMERCIAL (inválido)")
             missing_list.append(", ".join(miss))
+            motivos_dup.append("") 
 
-        df_out["__ERROS__"] = missing_list
-        has_errors = df_out["__ERROS__"].str.strip() != ""
+        df_out["EXPLICAÇÃO"] = missing_list
+        append_reason(df_out, dups_in_file_mask, "CODIGO_PRODUTO duplicado no arquivo")
+
+        append_reason(df_out, dups_in_db_aprv_mask, "CODIGO_PRODUTO já existe em APROVADOS")
+
+        append_reason(df_out, dups_in_db_pend_mask, "CODIGO_PRODUTO já existe em PENDENTES")
+
+        has_errors = df_out["EXPLICAÇÃO"].str.strip() != ""
 
         st.success("Pré-visualização (nada foi salvo ainda).")
         st.write(f"**{len(df_out):,}** linha(s) × **{len(df_out.columns):,}** coluna(s).")
-        st.dataframe(df_out.head(200), use_container_width=True)
-
-        if has_errors.any():
-            n_err = int(has_errors.sum())
-            st.error(f"⚠️ Existem {n_err} linha(s) com campos obrigatórios faltando/invalidos.")
-            with st.expander("Ver apenas linhas com erro"):
-                st.dataframe(df_out.loc[has_errors].head(500), use_container_width=True)
+        st.dataframe(df_out.head(200), width="stretch")
 
         st.markdown("---")
 
-        # --- Botão: Enviar para Snowflake (somente se 0 erros)
-        can_upload = not has_errors.any()
-        if st.button("⬆️ Enviar dados", disabled=not can_upload):
-            total = len(df_out)
+        # --- máscaras de validade
+        valid_mask = ~(has_errors)
+        df_valid = df_out.loc[valid_mask].copy()
+        df_errors = df_out.loc[has_errors].copy()
+
+        # --- Download do Excel com erros (se houver)
+        if not df_errors.empty:
+            st.error(f"⚠️ Existem {int(has_errors.sum())} linha(s) com problemas (obrigatórios/numéricos/duplicidades).")
+            with st.expander("Ver apenas linhas com erro"):
+                st.dataframe(df_errors.head(500), width="stretch")
+
+            # numeração da linha original do Excel (2 = cabeçalho + índice base-1)
+            df_errors.insert(0, "__LINHA_EXCEL__", df_errors.reset_index().index + 2)
+
+            buf = BytesIO()
+            with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+                df_errors.to_excel(w, index=False, sheet_name="Erros")
+            st.download_button(
+                "⬇️ Baixar planilha com erros",
+                data=buf.getvalue(),
+                file_name="catalogo_erros.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            st.success("✅ Nenhum erro encontrado no arquivo.")
+
+        # --- Botão: Enviar apenas as linhas válidas
+        #     (fica desabilitado apenas se NÃO houver linhas válidas)
+        can_upload_some = not df_valid.empty
+        if st.button("⬆️ Enviar apenas linhas válidas", disabled=not can_upload_some):
+            total_valid = len(df_valid)
             ok_count, fails = 0, []
             user = current_user()
             usuario_atual = user["name"] if user and "name" in user else None
-                
-            for idx, row in df_out.iterrows():
+
+            def to_float_ok(x):
+                try:
+                    return float(str(x).replace(",", "."))
+                except:
+                    return None
+
+            def to_int_ok(x):
+                try:
+                    return int(float(str(x)))
+                except:
+                    return None
+
+            for idx, row in df_valid.iterrows():
                 item_dict = {
                     "REFERENCIA": row["REFERENCIA"] or None,
                     "DATA_CADASTRO": data_hoje(),
@@ -236,15 +307,21 @@ with tab_excel:
                 }
 
                 ok, msg = insert_item(session, item_dict)
-                if ok: ok_count += 1
-                else:  fails.append((idx, msg))
+                if ok:
+                    ok_count += 1
+                else:
+                    fails.append((idx + 2, msg))  # type: ignore # +2: cabeçalho + base 1
 
-            if ok_count == total:
-                st.success(f"✅ Todos os {ok_count} registro(s) foram inseridos com sucesso.")
+            if ok_count == total_valid:
+                st.success(f"✅ Inseridos {ok_count}/{total_valid} registros válidos.")
             else:
-                st.warning(f"Parcial: {ok_count}/{total} inseridos. {len(fails)} falharam.")
-                with st.expander("Ver erros de inserção"):
-                    for i, err in fails:
-                        st.write(f"Linha {i+1}: {err}")
+                st.warning(f"Parcial: {ok_count}/{total_valid} válidos inseridos. {len(fails)} falharam.")
+                with st.expander("Ver erros de inserção (linhas válidas)"):
+                    for linha_excel, err in fails:
+                        st.write(f"Linha {linha_excel}: {err}")
+
+        # informação quando não há válidos
+        if df_valid.empty:
+            st.info("Nenhuma linha válida para inserir (corrija o Excel de erros e tente novamente).")
     else:
         st.info("Nenhum arquivo carregado ainda.")

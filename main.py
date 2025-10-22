@@ -36,7 +36,7 @@ with st.sidebar:
         u = current_user()
         st.caption("Logado como")
         st.markdown(f"**{u['name']}** (`{u['username']}`)")
-        if st.button("🚪 Sair", use_container_width=True, key="logout_sidebar"):
+        if st.button("🚪 Sair", width="stretch", key="logout_sidebar"):
             logout_user()
             st.rerun()
     else:

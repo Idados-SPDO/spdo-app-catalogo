@@ -95,4 +95,6 @@ mask = apply_common_filters(
 df_filtrado = df[mask].copy()
 
 # ===== Tabela =====
-st.dataframe(df_filtrado, use_container_width=True, hide_index=True,  column_config=dt_cfg)
+st.caption(f"Itens no catalogo: **{len(df_filtrado)}**")
+
+st.dataframe(df_filtrado, width="stretch", hide_index=True,  column_config=dt_cfg)

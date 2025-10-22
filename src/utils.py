@@ -2,9 +2,11 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from io import BytesIO
-from typing import Iterable, List
+from typing import Any, Iterable, List
 import io
 import pandas as pd
+import unicodedata
+import streamlit as st
 
 PT_DATE_FMT = "%d/%m/%Y"
 
@@ -67,6 +69,72 @@ def safe_qtd_un(qtd_med, un_med) -> str:
         pass
     return ""
 
+def _case_like(example: str, text: str) -> str:
+    """Mantém estilo do exemplo; útil se quiser preservar caixa. (Aqui forçaremos UPPER no fim.)"""
+    if example.isupper():
+        return text.upper()
+    if example.istitle():
+        return text.title()
+    return text
+
+def pluralize_pt(noun: str, qty: Any) -> str:
+    """
+    Plural simples PT-BR com exceções comuns, para embalagens.
+    - Regras: -ão→ões, -m→ns, -r/-z/-n→+es, -l→is, vogal→+s; 's' costuma ser invariável.
+    - Invariantes para siglas/unidades comuns.
+    """
+    if not noun:
+        return noun
+
+    # 1) quantidade == 1 => singular
+    try:
+        q = float(str(qty).replace(",", "."))
+        if q == 1:
+            return noun
+    except Exception:
+        # se não der pra converter, pluraliza
+        pass
+
+    original = noun.strip()
+    low = original.lower()
+
+    # 2) invariantes (unidades/siglas)
+    invariants = {
+        "un", "und", "pc", "pct", "cx", "kg", "g", "mg", "l", "ml",
+        "m", "cm", "mm", "lb", "lbs", "kit"
+    }
+    if low in invariants:
+        return original
+
+    # 3) irregulares comuns
+    irregular = {
+        "sachê": "sachês",
+        "pão": "pães",
+        "mão": "mãos",
+        "alemão": "alemães",
+        "galão": "galões",
+        "balão": "balões",
+    }
+    if low in irregular:
+        return _case_like(original, irregular[low])
+
+    # 4) regras gerais
+    if low.endswith("ão"):
+        return _case_like(original, re.sub("ão$", "ões", low))
+    if low.endswith("m"):
+        return _case_like(original, low[:-1] + "ns")
+    if low.endswith(("r", "z", "n")):
+        return _case_like(original, low + "es")
+    if low.endswith("l"):
+        return _case_like(original, low[:-1] + "is")
+    if low.endswith("s"):
+        # maioria invariável; se oxítona acentuada, +es
+        if re.search(r"[áéíóúâêô]s$", low):
+            return _case_like(original, low + "es")
+        return original
+    if low[-1] in "aeiouáéíóúâêô":
+        return _case_like(original, low + "s")
+    return _case_like(original, low + "s")
 
 def gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb_comercial, emb_comercial):
     item        = wipe_dashes(item)
@@ -81,11 +149,13 @@ def gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb
     sinonimo = " ".join(partes).strip()
 
     if emb_produto:
-        sinonimo = (sinonimo + " COMERCIALIZADO EM " + emb_produto).strip()
+        sinonimo = (sinonimo + " COMERCIALIZADO EM " + emb_produto.upper()).strip()
 
     try:
+        ### 
         if (qtd_emb_comercial not in (None, "", 1)) and emb_comercial:
-            sinonimo = (sinonimo + f" COM {emb_comercial} UNIDADES").strip()
+            emb_plural = pluralize_pt(emb_comercial, qtd_emb_comercial).upper()
+            sinonimo = (sinonimo + f" COM {qtd_emb_comercial} {emb_plural}").strip()
     except Exception:
         pass
 
