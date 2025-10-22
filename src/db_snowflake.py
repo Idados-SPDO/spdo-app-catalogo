@@ -220,12 +220,12 @@ def codigo_produto_exists_any(session: Session, codigo: str | None) -> tuple[boo
     return (False, "")
 
 def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
-    # Colunas que serão ligadas por parâmetro (sem as datas!)
     codigo = (item.get("CODIGO_PRODUTO") or "").strip()
     if not codigo:
         return False, "CODIGO_PRODUTO é obrigatório."
-    if codigo_produto_exists_any(session, codigo):
-        return False, f"CODIGO_PRODUTO '{codigo}' já existe na base."
+    exists, origem = codigo_produto_exists_any(session, codigo)
+    if exists:
+        return False, f"CODIGO_PRODUTO '{codigo}' já existe na base. Origem: '{origem}'"
     cols = [
         "REFERENCIA",
         "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
