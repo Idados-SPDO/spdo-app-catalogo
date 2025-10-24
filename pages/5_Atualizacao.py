@@ -3,8 +3,8 @@ import pandas as pd
 from src.db_snowflake import apply_common_filters, build_user_options, get_session, load_user_display_map, log_atualizacao, fetch_row_snapshot
 from src.auth import init_auth, is_authenticated, current_user
 from src.utils import extrair_valores, gerar_sinonimo, gerar_palavra_chave
+from src.variables import FQN_APR
 
-FQN_APROV = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS" 
 
 init_auth()
 if not is_authenticated():
@@ -19,7 +19,7 @@ session = get_session()
 
 # -------- Carrega apenas aprovados --------
 try:
-    df = session.table(FQN_APROV).to_pandas()
+    df = session.table(FQN_APR).to_pandas()
 except Exception as e:
     st.error(f"Falha ao carregar aprovados: {e}")
     st.stop()
@@ -56,7 +56,7 @@ df_view = df[mask].copy()
 ORDER_ATUALIZACAO = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
-    "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
+    "MARCA","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","REFERENCIA",
     "DATA_CADASTRO","USUARIO_CADASTRO",
     "DATA_APROVACAO","USUARIO_APROVACAO",  
@@ -162,11 +162,11 @@ if st.button("💾 Salvar alterações"):
         return "'" + str(val).replace("'", "''") + "'"
 
     # Atualiza direto na tabela de APROVADOS
-    table_name = FQN_APROV
+    table_name = FQN_APR
     usuario_atual = user["name"] if isinstance(user, dict) and "name" in user else None
 
     for key_val, cols_changed in changes:
-        before = fetch_row_snapshot(session, FQN_APROV, int(key_val)) if str(key_val).isdigit() else None
+        before = fetch_row_snapshot(session, FQN_APR, int(key_val)) if str(key_val).isdigit() else None
         
         deps_desc     = {"ESPECIFICACAO"}
         deps_sinonimo = {"ITEM","ESPECIFICACAO","MARCA","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
@@ -234,7 +234,7 @@ if st.button("💾 Salvar alterações"):
         except Exception as e:
             errors.append((key_val, str(e)))
 
-        after = fetch_row_snapshot(session, FQN_APROV, int(key_val)) if str(key_val).isdigit() else None
+        after = fetch_row_snapshot(session, FQN_APR, int(key_val)) if str(key_val).isdigit() else None
         try:
             log_atualizacao(
                 session,

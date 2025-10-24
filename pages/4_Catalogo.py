@@ -4,14 +4,13 @@ import pandas as pd
 from src.db_snowflake import apply_common_filters, build_user_options, get_session, load_user_display_map
 from src.utils import order_catalogo
 from src.auth import init_auth, is_authenticated
-
-FQN_APROV = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS"
+from src.variables import FQN_APR
 
 # ===== Helpers =====
 ORDER_CATALOGO = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
-    "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
+    "MARCA","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","REFERENCIA",
     "DATA_CADASTRO","USUARIO_CADASTRO",
     "DATA_APROVACAO","USUARIO_APROVACAO",        # novos
@@ -55,7 +54,7 @@ st.title("📚 Catálogo de Insumos")
 # ===== Dados =====
 session = get_session()
 try:
-    df = session.table(FQN_APROV).to_pandas()
+    df = session.table(FQN_APR).to_pandas()
     df = order_catalogo(df)
 except Exception as e:
     st.error(f"Falha ao carregar aprovados: {e}")

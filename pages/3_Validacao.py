@@ -2,25 +2,24 @@ import streamlit as st
 import pandas as pd
 from src.db_snowflake import apply_common_filters, build_user_options, get_session, listar_itens_df, load_user_display_map, log_validacao, log_reprovacao
 from src.auth import init_auth, is_authenticated, current_user
+from src.utils import extrair_valores, gerar_sinonimo 
+from src.variables import FQN_MAIN, FQN_COR, FQN_APR
 
 # ==============================
 # Constantes / Config
 # ==============================
-FQN_MAIN  = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS"
-FQN_COR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_CORRECOES"
-FQN_APR   = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS"
 
 ORDER_VALIDACAO = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
-    "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
+    "MARCA","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","DATA_CADASTRO","USUARIO_CADASTRO","REFERENCIA",
 ]
 
 ORDER_CORRECOES = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
-    "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
+    "MARCA","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","REFERENCIA",
     "DATA_CADASTRO","USUARIO_CADASTRO",
     "DATA_REPROVACAO","USUARIO_REPROVACAO",
@@ -29,8 +28,9 @@ ORDER_CORRECOES = [
 
 EDITABLE_COR_COLS = [
     "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA","TIPO_CODIGO","CODIGO_PRODUTO",
-    "INSUMO","ITEM","DESCRICAO","ESPECIFICACAO","MARCA","EMB_PRODUTO","UN_MED","QTD_MED",
-    "EMB_COMERCIAL","QTD_EMB_COMERCIAL","SINONIMO","PALAVRA_CHAVE","REFERENCIA"
+    "INSUMO","ITEM","DESCRICAO","ESPECIFICACAO","MARCA","QTD_EMB_PRODUTO", 
+    "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
+    "SINONIMO","PALAVRA_CHAVE","REFERENCIA"
 ]
 
 # ==============================
@@ -69,6 +69,111 @@ def build_datetime_column_config(df: pd.DataFrame, cols: list[str]) -> dict:
         else:
             cfg[c] = st.column_config.TextColumn(disabled=True)
     return cfg
+
+
+def _sql_escape(val):
+    import pandas as pd
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return "NULL"
+    if isinstance(val, (int, float)):
+        return str(val)
+    return "'" + str(val).replace("'", "''") + "'"
+
+def _build_desc(row_after) -> str:
+    """
+    Recria DESCRICAO a partir de ESPECIFICACAO, seguindo 5_Atualizacao.
+    - Se DESCRICAO está vazio/nulo, tenta extrair de ESPECIFICACAO
+    """
+    desc = row_after.get("DESCRICAO")
+    if (desc is None or str(desc).strip() == "") and "ESPECIFICACAO" in row_after:
+        return extrair_valores(row_after.get("ESPECIFICACAO", "") or "")
+    return desc if desc is not None else ""
+
+def _build_sinonimo_like_update(row_after) -> str:
+    """
+    Recalcula SINONIMO com a MESMA assinatura usada na 5_Atualizacao.
+    """
+    desc = _build_desc(row_after)
+    return gerar_sinonimo(
+        row_after.get("ITEM"),
+        desc or row_after.get("DESCRICAO") or "",
+        row_after.get("MARCA"),
+        row_after.get("QTD_MED"),
+        row_after.get("UN_MED"),
+        row_after.get("EMB_PRODUTO"),
+        row_after.get("QTD_EMB_COMERCIAL"),
+        row_after.get("EMB_COMERCIAL"),
+    )
+
+def _recalc_sinonimo_df_inplace(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Recalcula DESCRICAO (se vazia) e SINONIMO para TODAS as linhas visíveis no DataFrame.
+    Retorna o próprio df (mutado) para encadear.
+    """
+    if "SINONIMO" not in df.columns:
+        df["SINONIMO"] = ""
+    if "DESCRICAO" not in df.columns:
+        df["DESCRICAO"] = ""
+
+    def _calc(row):
+        # monta um dict estilo "row_after" (igual 5_Atualizacao)
+        row_after = row.to_dict()
+        novo_desc = _build_desc(row_after)
+        row_after["DESCRICAO"] = novo_desc
+        return novo_desc, _build_sinonimo_like_update(row_after)
+
+    out = df.apply(lambda r: pd.Series(_calc(r), index=["__DESC_NEW__", "__SIN_NEW__"]), axis=1)
+    # aplica descrição nova apenas se a atual estiver vazia/nula (mesmo critério do helper)
+    mask_apply_desc = df["DESCRICAO"].astype(str).str.strip().eq("") | df["DESCRICAO"].isna()
+    df.loc[mask_apply_desc, "DESCRICAO"] = out["__DESC_NEW__"]
+    df["SINONIMO"] = out["__SIN_NEW__"]
+    return df
+
+def _persist_sinonimo_batch(session, table_fqn: str, df_ids: pd.DataFrame, id_col: str = "ID"):
+    """
+    Atualiza no banco em lote:
+      - Atualiza DESCRICAO (apenas quando calculada nova)
+      - Atualiza SINONIMO (sempre com o valor recalculado)
+    Usa CASE ... WHEN ... THEN ... para eficiência.
+    """
+    import pandas as pd
+    if df_ids.empty or id_col not in df_ids or "SINONIMO" not in df_ids:
+        return
+
+    # Garantir colunas
+    work = df_ids[[id_col, "SINONIMO"]].copy()
+    has_desc = "DESCRICAO" in df_ids.columns
+    if has_desc:
+        work["__DESC_APPLY__"] = df_ids["DESCRICAO"]
+    # prepara pares
+    pairs = []
+    for _, r in work.iterrows():
+        _id = int(r[id_col])
+        _sin = "" if pd.isna(r["SINONIMO"]) else str(r["SINONIMO"])
+        _desc = None
+        if has_desc:
+            _desc = None if pd.isna(r["__DESC_APPLY__"]) else str(r["__DESC_APPLY__"])
+        pairs.append((_id, _sin, _desc))
+
+    if not pairs:
+        return
+
+    ids_csv = ", ".join(str(i) for (i, _, __) in pairs)
+    when_sin = " ".join([f"WHEN {i} THEN {_sql_escape(s)}" for (i, s, __) in pairs])
+
+    sets = [f"SINONIMO = CASE {id_col} {when_sin} END"]
+    if has_desc:
+        # Atualiza DESCRICAO somente quando veio calculada (evitar sobrepor se usuário alterou manualmente)
+        when_desc = " ".join([f"WHEN {i} THEN {_sql_escape(d) if d is not None else 'DESCRICAO'}"
+                              for (i, _, d) in pairs])
+        sets.append(f"DESCRICAO = CASE {id_col} {when_desc} END")
+
+    sql = f"""
+        UPDATE {table_fqn}
+        SET {", ".join(sets)}
+        WHERE {id_col} IN ({ids_csv})
+    """
+    session.sql(sql).collect()
 
 # ==============================
 # Ações de Banco
@@ -336,6 +441,13 @@ else:
             if select_all_val:
                 df_view["Validar"] = True
 
+            df_view = _recalc_sinonimo_df_inplace(df_view)
+
+            try:
+                _persist_sinonimo_batch(session, FQN_MAIN, df_view[["ID", "DESCRICAO", "SINONIMO"]])
+            except Exception as e:
+                st.warning(f"Não foi possível atualizar SINONIMO/descrição (pendentes): {e}")
+
             # datas formatadas
             DT_COLS_VAL = ["DATA_CADASTRO"]
             df_view = coerce_datetimes(df_view, DT_COLS_VAL)
@@ -389,6 +501,12 @@ else:
         def dlg_aprova(ids):
             st.write(f"Você vai **APROVAR** {len(ids)} item(ns).")
             obs = st.text_area("Observação (opcional)", key="dlg_obs_aprova")
+            try:
+                sel_df = df[df["ID"].isin(ids)].copy()
+                sel_df = _recalc_sinonimo_df_inplace(sel_df)
+                _persist_sinonimo_batch(session, FQN_MAIN, sel_df[["ID","DESCRICAO","SINONIMO"]])
+            except Exception as e:
+                st.warning(f"Falha ao sincronizar SINONIMO antes da aprovação: {e}")
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Confirmar ✅", type="primary"):
@@ -401,6 +519,12 @@ else:
         def dlg_reprova(ids):
             st.write(f"Você vai **REJEITAR** {len(ids)} item(ns).")
             obs = st.text_area("Motivo/observação (opcional)", key="dlg_obs_reprova")
+            try:
+                sel_df = df[df["ID"].isin(ids)].copy()
+                sel_df = _recalc_sinonimo_df_inplace(sel_df)
+                _persist_sinonimo_batch(session, FQN_MAIN, sel_df[["ID","DESCRICAO","SINONIMO"]])
+            except Exception as e:
+                st.warning(f"Falha ao sincronizar SINONIMO antes da rejeição: {e}")
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Confirmar ❌", type="primary"):

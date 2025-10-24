@@ -9,10 +9,10 @@ from snowflake.snowpark.context import get_active_session
 import os
 from typing import Optional, Dict, Any
 import json
+from src.variables import FQN_USERS, FQN_APR, FQN_COR, FQN_MAIN, FQN_LOG_ATUAL, FQN_LOG_REPROV, FQN_LOG_VALID
 # =========================
 # Conexão
 # =========================
-FQN_USERS = "BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_USERS"
 
 def load_user_display_map(session) -> dict[str, str]:
     """
@@ -198,9 +198,9 @@ def codigo_produto_exists_any(session: Session, codigo: str | None) -> tuple[boo
         return (False, "")
     codigo = str(codigo).strip()
     # 1) Aprovados primeiro (tem prioridade de bloqueio)
-    q1 = """
+    q1 = f"""
       SELECT 1
-      FROM BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS
+      FROM {FQN_APR}
       WHERE CODIGO_PRODUTO = ?
       LIMIT 1
     """
@@ -208,9 +208,9 @@ def codigo_produto_exists_any(session: Session, codigo: str | None) -> tuple[boo
         return (True, "APROVADOS")
 
     # 2) Pendentes (insumos_h)
-    q2 = """
+    q2 = f"""
       SELECT 1
-      FROM BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS
+      FROM {FQN_MAIN}
       WHERE CODIGO_PRODUTO = ?
       LIMIT 1
     """
@@ -238,7 +238,7 @@ def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
 
     placeholders = ", ".join([f":{i+1}" for i in range(len(cols))])
     sql = f"""
-        INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS
+        INSERT INTO {FQN_MAIN}
         ({", ".join(cols)}, DATA_CADASTRO)
         VALUES ({placeholders}, CURRENT_TIMESTAMP())
     """
@@ -255,7 +255,7 @@ def insert_item(session: Session, item: dict[str, Any]) -> tuple[bool, str]:
 
 def listar_itens_df(session: Session) -> pd.DataFrame:
     try:
-        t = session.table("BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS")
+        t = session.table(FQN_MAIN)
         excluir = {"DATA_VALIDACAO", "USUARIO_VALIDADOR", "DATA_ATUALIZACAO", "USUARIO_ATUALIZACAO"}
         cols = [f.name for f in t.schema.fields if f.name not in excluir]
         return t.select(cols).sort("DATA_CADASTRO", ascending=False).to_pandas()
@@ -349,7 +349,7 @@ def fetch_row_snapshot(session, table_fqn: str, item_id: int):
 
 def log_validacao(session, *, item_id, codigo_produto, origem, destino, obs, user):
     sql = f"""
-      INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_LOG_VALIDACAO
+      INSERT INTO {FQN_LOG_VALID}
       (ITEM_ID, CODIGO_PRODUTO, ORIGEM_TABELA, DESTINO_TABELA, OBSERVACAO, APROVADO_POR_USER, APROVADO_POR_NOME)
       SELECT ?, ?, ?, ?, ?, ?, ?
     """
@@ -361,7 +361,7 @@ def log_validacao(session, *, item_id, codigo_produto, origem, destino, obs, use
 
 def log_reprovacao(session, *, item_id, codigo_produto, origem, destino, motivo, user):
     sql = f"""
-      INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_LOG_REPROVACAO
+      INSERT INTO {FQN_LOG_REPROV}
       (ITEM_ID, CODIGO_PRODUTO, ORIGEM_TABELA, DESTINO_TABELA, MOTIVO, REPROVADO_POR_USER, REPROVADO_POR_NOME)
       SELECT ?, ?, ?, ?, ?, ?, ?
     """
@@ -373,7 +373,7 @@ def log_reprovacao(session, *, item_id, codigo_produto, origem, destino, motivo,
 
 def log_atualizacao(session, *, item_id, codigo_produto, colunas_alteradas, before_obj, after_obj, user):
     sql = f"""
-      INSERT INTO BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_LOG_ATUALIZACAO
+      INSERT INTO {FQN_LOG_ATUAL}
       (ITEM_ID, CODIGO_PRODUTO, COLUNAS_ALTERADAS, BEFORE_SNAPSHOT, AFTER_SNAPSHOT, ATUALIZADO_POR_USER, ATUALIZADO_POR_NOME)
       SELECT ?, ?, {_sql_array(colunas_alteradas)}, {_sql_json(before_obj)}, {_sql_json(after_obj)}, ?, ?
     """
@@ -406,7 +406,7 @@ def fetch_existing_codigos_dual(session: Session, codigos: list[str]) -> tuple[s
 
         q_pend = f"""
           SELECT DISTINCT CODIGO_PRODUTO
-          FROM BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_INSUMOS
+          FROM {FQN_MAIN}
           WHERE CODIGO_PRODUTO IN ({placeholders})
         """
         df1 = session.sql(q_pend, params=chunk).to_pandas()
@@ -415,7 +415,7 @@ def fetch_existing_codigos_dual(session: Session, codigos: list[str]) -> tuple[s
 
         q_aprv = f"""
           SELECT DISTINCT CODIGO_PRODUTO
-          FROM BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_APROVADOS
+          FROM {FQN_APR}
           WHERE CODIGO_PRODUTO IN ({placeholders})
         """
         df2 = session.sql(q_aprv, params=chunk).to_pandas()

@@ -42,12 +42,14 @@ with tab_form:
             familia     = st.text_input("FAMILIA")
             subfamilia  = st.text_input("SUBFAMILIA")
 
+
         with c2:
             tipo_codigo    = st.text_input("TIPO_CODIGO")
             codigo_produto = st.text_input("CODIGO_PRODUTO")
             insumo         = st.text_input("INSUMO")  # opcional
             item           = st.text_input("ITEM")
             especificacao  = st.text_area("ESPECIFICACAO (CHAVE: VALOR; ...)", height=122)
+            qtd_emb_produto= st.number_input("QTD_EMB_PRODUTO",  min_value=0, step=1)
 
         with c3:
             marca            = st.text_input("MARCA")
@@ -77,6 +79,7 @@ with tab_form:
                 "QTD_MED": qtd_med,
                 "EMB_COMERCIAL": emb_comercial,
                 "QTD_EMB_COMERCIAL": qtd_emb_comercial,
+                "QTD_EMB_PRODUTO": qtd_emb_produto,
             }
             ok, faltando = campos_obrigatorios_ok(obrig)
             if not ok:
@@ -107,6 +110,7 @@ with tab_form:
                     "QTD_MED": float(qtd_med) if qtd_med is not None else None,
                     "EMB_COMERCIAL": emb_comercial,
                     "QTD_EMB_COMERCIAL": int(qtd_emb_comercial) if qtd_emb_comercial is not None else None,
+                    "QTD_EMB_PRODUTO": int(qtd_emb_produto) if qtd_emb_produto is not None else None,
                     "SINONIMO": gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb_comercial, emb_comercial),
                     "PALAVRA_CHAVE": gerar_palavra_chave(subfamilia, item, marca, emb_produto, qtd_med, un_med, familia),
                 }
@@ -149,7 +153,7 @@ with tab_excel:
         EXPECTED = [
             "REFERENCIA","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
             "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","ESPECIFICACAO",
-            "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
+            "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
         ]
         for c in EXPECTED:
             if c not in df_out.columns:
@@ -174,7 +178,7 @@ with tab_excel:
         REQUIRED = [
             "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
             "TIPO_CODIGO","CODIGO_PRODUTO","ITEM","ESPECIFICACAO",
-            "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
+            "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
         ]
 
         df_out["CODIGO_PRODUTO"] = df_out["CODIGO_PRODUTO"].astype(str).str.strip()
@@ -198,6 +202,9 @@ with tab_excel:
                 miss.append("QTD_MED (inválido)")
             if "QTD_EMB_COMERCIAL" in row and str(row["QTD_EMB_COMERCIAL"]).strip() != "" and to_int_ok(row["QTD_EMB_COMERCIAL"]) is None:
                 miss.append("QTD_EMB_COMERCIAL (inválido)")
+            if "QTD_EMB_PRODUTO" in row and str(row["QTD_EMB_PRODUTO"]).strip() != "" and to_int_ok(row["QTD_EMB_PRODUTO"]) is None:
+                miss.append("QTD_EMB_PRODUTO (inválido)")
+
             missing_list.append(", ".join(miss))
             motivos_dup.append("") 
 
@@ -285,6 +292,7 @@ with tab_excel:
                     "QTD_MED": to_float_ok(row["QTD_MED"]),
                     "EMB_COMERCIAL": row["EMB_COMERCIAL"],
                     "QTD_EMB_COMERCIAL": to_int_ok(row["QTD_EMB_COMERCIAL"]),
+                    "QTD_EMB_PRODUTO": to_int_ok(row["QTD_EMB_PRODUTO"]),
                     "SINONIMO": gerar_sinonimo(
                         row["ITEM"],
                         extrair_valores(row["ESPECIFICACAO"]),
