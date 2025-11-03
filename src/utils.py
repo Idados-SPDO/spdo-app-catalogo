@@ -218,7 +218,7 @@ def _to_int_safe(x):
 COLS_TEMPLATE = [
     "REFERENCIA","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","ESPECIFICACAO",
-    "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
+    "MARCA","QTD_EMB_PRODUTO","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
 ]
 
 def gerar_template_excel_catalogo() -> bytes:
@@ -237,7 +237,7 @@ def gerar_template_excel_catalogo() -> bytes:
             "OBS": [
                 "Opcional", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório",
                 "Obrigatório", "Obrigatório", "Opcional", "Obrigatório", "Obrigatório",
-                "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório",
+                "Obrigatório","Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório",
             ]
         })
         dicas.to_excel(writer, index=False, sheet_name="DICAS")
@@ -248,7 +248,7 @@ BASE_ORDER_CATALOGO: list[str] = [
     "CODIGO_PRODUTO", "TIPO_CODIGO",
     "GRUPO", "CATEGORIA", "SEGMENTO", "FAMILIA", "SUBFAMILIA",
     "ITEM", "MARCA",
-    "EMB_PRODUTO", "UN_MED", "QTD_MED", "EMB_COMERCIAL", "QTD_EMB_COMERCIAL",
+    "QTD_EMB_PRODUTO", "EMB_PRODUTO", "UN_MED", "QTD_MED", "EMB_COMERCIAL", "QTD_EMB_COMERCIAL",
     "PALAVRA_CHAVE", "SINONIMO", "DESCRICAO", "ESPECIFICACAO",
     "REFERENCIA",
     "DATA_CADASTRO", "DATA_ATUALIZACAO",
@@ -261,7 +261,7 @@ BASE_ORDER_ATUALIZACAO: list[str] = [
     "GRUPO", "CATEGORIA", "SEGMENTO", "FAMILIA", "SUBFAMILIA",
     "INSUMO", "ITEM",
     "CODIGO_PRODUTO", "TIPO_CODIGO",
-    "EMB_PRODUTO", "UN_MED", "QTD_MED", "EMB_COMERCIAL", "QTD_EMB_COMERCIAL",
+    "QTD_EMB_PRODUTO", "EMB_PRODUTO", "UN_MED", "QTD_MED", "EMB_COMERCIAL", "QTD_EMB_COMERCIAL",
     "DESCRICAO", "ESPECIFICACAO",
     "PALAVRA_CHAVE", "SINONIMO",
     "REFERENCIA",
@@ -307,3 +307,4 @@ def order_catalogo(df: pd.DataFrame, prepend: Iterable[str] | None = None, appen
 
 def order_atualizacao(df: pd.DataFrame, prepend: Iterable[str] | None = None, append: Iterable[str] | None = None) -> pd.DataFrame:
     return apply_column_order(df, BASE_ORDER_ATUALIZACAO, prepend, append)
+
