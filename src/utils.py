@@ -155,7 +155,7 @@ def gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb
         ### 
         if (qtd_emb_comercial not in (None, "", 1)) and emb_comercial:
             emb_plural = pluralize_pt(emb_comercial, qtd_emb_comercial).upper()
-            sinonimo = (sinonimo + f" COM {qtd_emb_comercial} {emb_plural}").strip()
+            sinonimo = (sinonimo + f" ({qtd_emb_comercial} {emb_plural})").strip()
     except Exception:
         pass
 
@@ -307,4 +307,5 @@ def order_catalogo(df: pd.DataFrame, prepend: Iterable[str] | None = None, appen
 
 def order_atualizacao(df: pd.DataFrame, prepend: Iterable[str] | None = None, append: Iterable[str] | None = None) -> pd.DataFrame:
     return apply_column_order(df, BASE_ORDER_ATUALIZACAO, prepend, append)
+
 
