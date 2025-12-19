@@ -21,33 +21,67 @@ init_auth()
 
 LOGIN_PAGE = st.Page("pages/0_Login.py", title="🔐 Login")
 
-PAGES = {
-    "home":         st.Page("pages/1_Home.py",         title="🏠 Início"),
-    "catalogo":     st.Page("pages/4_Catalogo.py",     title="📚 Catálogo"),
-    "cadastro":     st.Page("pages/2_Cadastro.py",     title="➕ Cadastro"),
-    "validacao":    st.Page("pages/3_Validacao.py",    title="✅ Validação"),
-    "nao_aprovados":st.Page("pages/6_NaoAprovados.py", title="❌ Não Aprovados"),
-    "atualizacao":  st.Page("pages/5_Atualizacao.py",  title="🛠️ Atualização"),
-    "exclusao": st.Page("pages/7_Exclusao.py", title="🗑️ Exclusão"),
-    "usuarios": st.Page("pages/8_Usuarios.py", title="👤 Usuários")
+PAGE_META = {
+    "home": {
+        "page": st.Page("pages/1_Home.py", title="🏠 Início"),
+        "module": "Módulo 1",
+    },
+    "catalogo": {
+        "page": st.Page("pages/4_Catalogo.py", title="📚 Catálogo"),
+        "module": "Módulo 1",
+    },
+    "cadastro": {
+        "page": st.Page("pages/2_Cadastro.py", title="➕ Cadastro"),
+        "module": "Módulo 2",
+    },
+    "nao_aprovados": {
+        "page": st.Page("pages/6_NaoAprovados.py", title="❌ Não Aprovados"),
+        "module": "Módulo 2",
+    },
+    "validacao": {
+        "page": st.Page("pages/3_Validacao.py", title="✅ Validação"),
+        "module": "Módulo 3",
+    },
+    "atualizacao": {
+        "page": st.Page("pages/5_Atualizacao.py", title="🛠️ Atualização"),
+        "module": "Módulo 3",
+    },
+    "exclusao": {
+        "page": st.Page("pages/7_Exclusao.py", title="🗑️ Exclusão"),
+        "module": "Módulo 3",
+    },
+    "usuarios": {
+        "page": st.Page("pages/8_Usuarios.py", title="👤 Usuários"),
+        "module": "Módulo 3",
+    },
 }
+
 
 ROLE_MATRIX = {
     "USER":        ["home", "catalogo"],
     "OPERACIONAL": ["home", "catalogo", "cadastro", "nao_aprovados"],
-    "ADMIN":       list(PAGES.keys()),
+    "ADMIN":       list(PAGE_META.keys()),
 }
 
-def pages_for_role(role: str):
+MODULE_ORDER = ["Módulo 1", "Módulo 2", "Módulo 3"]
+
+def nav_for_role(role: str) -> dict:
     role = (role or "USER").upper().strip()
-    keys = ROLE_MATRIX.get(role, ROLE_MATRIX["USER"])
-    return [PAGES[k] for k in keys]
+    allowed_keys = ROLE_MATRIX.get(role, ROLE_MATRIX["USER"])
+
+    grouped = {m: [] for m in MODULE_ORDER}
+    for k in allowed_keys:
+        meta = PAGE_META.get(k)
+        if not meta:
+            continue
+        grouped[meta["module"]].append(meta["page"])
+
+    return {m: pages for m, pages in grouped.items() if pages}
 
 if is_authenticated():
     u = current_user()
     role = u.get("role", "USER")
-    app_pages = pages_for_role(role)
-    nav = st.navigation({"Navegação": app_pages})
+    nav = st.navigation(nav_for_role(role))
 else:
     nav = st.navigation({"Acesso": [LOGIN_PAGE]})
 
