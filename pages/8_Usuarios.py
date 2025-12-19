@@ -3,9 +3,14 @@ import pandas as pd
 from snowflake.snowpark import functions as F
 
 from src.auth import require_roles, current_user
-from src.db_snowflake import get_session
+from src.db_snowflake import (
+    get_session,
+    users_create_or_update,
+    users_list_usernames,
+)
 from src.variables import FQN_USERS
 
+DEFAULT_PASSWORD = "123"
 require_roles("ADMIN")
 
 st.set_page_config(page_title="Catálogo • Usuários", layout="wide")
@@ -168,9 +173,10 @@ if st.button("Excluir selecionados", use_container_width=True, disabled=not can_
         st.error(f"Falha ao excluir usuários: {e}")
         st.stop()
 
-# --- Adicionar usuário ---
 st.divider()
 st.subheader("Adicionar usuário")
+
+st.caption(f"Senha inicial padrão: **{DEFAULT_PASSWORD}** (recomendado trocar depois).")
 
 with st.form("add_user_form", clear_on_submit=True):
     c1, c2, c3 = st.columns(3)
@@ -181,34 +187,63 @@ with st.form("add_user_form", clear_on_submit=True):
     with c3:
         new_role = st.selectbox("Permissão", ROLES_VALIDAS, index=0)
 
-    submitted = st.form_submit_button("Adicionar")
+    # opcional: permitir definir senha já na criação (se preferir, pode remover este bloco)
+    set_custom_pwd = st.checkbox("Definir senha agora (opcional)", value=False)
+    custom_pwd = ""
+    custom_conf = ""
+    if set_custom_pwd:
+        c4, c5 = st.columns(2)
+        with c4:
+            custom_pwd = st.text_input("Senha", type="password")
+        with c5:
+            custom_conf = st.text_input("Confirmar senha", type="password")
+
+    submitted = st.form_submit_button("Adicionar", use_container_width=True)
 
     if submitted:
-        u = new_username.strip()
+        u = (new_username or "").strip()
+        n = (new_name or "").strip()
+        r = (new_role or "").strip().upper()
+
         if not u:
             st.error("Usuário é obrigatório.")
             st.stop()
 
-        exists = session.sql(
-            f"SELECT 1 FROM {FQN_USERS} WHERE USERNAME = '{_esc(u)}' LIMIT 1"
-        ).collect()
-        if exists:
-            st.error("Já existe um usuário com esse usuário.")
+        if r not in ROLES_VALIDAS:
+            st.error("ROLE inválida.")
             st.stop()
 
-        cols_insert = ["USERNAME", "ROLE"]
-        vals_insert = [f"'{_esc(u)}'", f"'{_esc(new_role)}'"]
+        # Checa duplicidade
+        existing = set(users_list_usernames(session))
+        if u in existing:
+            st.error("Já existe um usuário com esse username.")
+            st.stop()
 
-        if "NAME" in cols and new_name.strip():
-            cols_insert.append("NAME")
-            vals_insert.append(f"'{_esc(new_name.strip())}'")
+        # senha a aplicar
+        if set_custom_pwd:
+            p = (custom_pwd or "").strip()
+            c = (custom_conf or "").strip()
+            if not p or not c:
+                st.error("Preencha senha e confirmação.")
+                st.stop()
+            if p != c:
+                st.error("Senha e confirmação não conferem.")
+                st.stop()
+            if len(p) < 4:
+                st.error("A senha deve ter pelo menos 4 caracteres.")
+                st.stop()
+            pwd_to_set = p
+        else:
+            pwd_to_set = DEFAULT_PASSWORD
 
         try:
-            session.sql(
-                f"INSERT INTO {FQN_USERS} ({', '.join(cols_insert)}) VALUES ({', '.join(vals_insert)})"
-            ).collect()
-            st.success("Usuário adicionado.")
+            # Cria usuário com hash/salt no banco
+            users_create_or_update(session, u, (n or u), r, pwd_to_set)
+            st.success(
+                f"Usuário criado: **{u}** | ROLE: **{r}** | "
+                f"Senha inicial: **{pwd_to_set}**"
+            )
             st.rerun()
         except Exception as e:
-            st.error(f"Falha ao inserir usuário: {e}")
+            st.error(f"Falha ao criar usuário: {e}")
             st.stop()
