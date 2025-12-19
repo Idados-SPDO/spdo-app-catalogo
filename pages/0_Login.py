@@ -94,11 +94,7 @@ else:
                 st.session_state["open_pwd"] = True
                 st.session_state["pwd_nonce"] += 1
                 st.rerun()
-        with cols_btn[1]:
-            if st.button("➕ Criar novo usuário", key="btn_open_create_user"):
-                st.session_state["open_create_user"] = True
-                st.session_state["create_user_nonce"] += 1
-                st.rerun()
+
 
     # =========================
     # Dialog: Trocar senha
@@ -139,75 +135,4 @@ else:
                 st.session_state["pwd_nonce"] += 1
                 st.rerun()
 
-    # =========================
-    # Dialog: Criar usuário
-    # =========================
-    @st.dialog("Criar usuário")
-    def create_user_dialog():
-        nonce = st.session_state.get("create_user_nonce", 0)
 
-        key_uname = f"dlg_create_username_{nonce}"
-        key_name  = f"dlg_create_name_{nonce}"
-        key_role  = f"dlg_create_role_{nonce}"
-        key_pwd   = f"dlg_create_pwd_{nonce}"
-        key_conf  = f"dlg_create_conf_{nonce}"
-
-        st.write("Preencha os dados do novo usuário:")
-
-        username = st.text_input("Username (login)", key=key_uname)
-        name     = st.text_input("Nome completo", key=key_name)
-        role     = st.text_input("Papel (ROLE)", value="USER", key=key_role)
-        pwd      = st.text_input("Senha", type="password", key=key_pwd)
-        conf     = st.text_input("Confirmar senha", type="password", key=key_conf)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Criar usuário", type="primary", key=f"dlg_create_{nonce}"):
-                u = (username or "").strip()
-                n = (name or "").strip()
-                r = (role or "").strip() or "USER"
-                p = (pwd or "").strip()
-                c = (conf or "").strip()
-
-                if not u or not n or not p:
-                    st.warning("Preencha username, nome e senha."); return
-                if p != c:
-                    st.warning("Senha e confirmação não conferem."); return
-                if len(p) < 4:
-                    st.warning("A senha deve ter pelo menos 4 caracteres."); return
-
-                # Evita sobrescrever usuário existente sem querer
-                existing = set(users_list_usernames(session))
-                if u in existing:
-                    st.warning("Este username já está cadastrado."); return
-
-                try:
-                    # Cria usuário com hash/salt no banco
-                    users_create_or_update(session, u, n, r, p)
-
-                    # Login automático após criação
-                    if login_user(u, p):
-                        st.success(f"Usuário **{n}** criado e logado com sucesso!")
-                    else:
-                        st.success("Usuário criado com sucesso, mas o login automático falhou. Tente entrar manualmente.")
-
-                    st.session_state["open_create_user"] = False
-                    st.session_state["create_user_nonce"] += 1
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Falha ao criar usuário: {e}")
-
-        with col2:
-            if st.button("Cancelar", key=f"dlg_cancel_create_{nonce}"):
-                st.session_state["open_create_user"] = False
-                st.session_state["create_user_nonce"] += 1
-                st.rerun()
-
-    # --- Chamada dos dialogs, se flags estiverem ligadas ---
-    if st.session_state.get("open_pwd") and usernames:
-        # só faz sentido trocar senha se já houver usuários
-        chosen_user = st.session_state.get("login_sel_user", usernames[0])
-        change_pwd_dialog(chosen_user)
-
-    if st.session_state.get("open_create_user"):
-        create_user_dialog()
