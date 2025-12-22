@@ -22,3 +22,19 @@ def current_user():
 
 def logout_user():
     st.session_state.auth = {"logged": False, "user": None}
+
+
+def require_roles(*allowed_roles: str):
+    from src.auth import init_auth, is_authenticated, current_user  # mantém compatível com seu setup
+
+    init_auth()
+    if not is_authenticated():
+        st.error("Faça login para continuar.")
+        st.stop()
+
+    role = (current_user().get("role") or "USER").upper().strip()
+    allowed = {r.upper().strip() for r in allowed_roles}
+
+    if role not in allowed:
+        st.error("Você não tem permissão para acessar esta página.")
+        st.stop()
