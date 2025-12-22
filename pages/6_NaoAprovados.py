@@ -1,16 +1,13 @@
 import streamlit as st
 import pandas as pd
 from src.db_snowflake import apply_common_filters, build_user_options, get_session, load_user_display_map
-from src.auth import init_auth, is_authenticated, current_user
-from src.utils import extrair_valores, gerar_sinonimo  # mesma base do 5_Atualizacao
+from src.auth import current_user, require_roles
+from src.utils import extrair_valores, gerar_sinonimo 
 from src.variables import FQN_MAIN, FQN_COR, FQN_APR
 
 st.title("Não Aprovados")
 
-init_auth()
-if not is_authenticated():
-    st.error("Faça login para continuar.")
-    st.stop()
+require_roles("ADMIN", "OPERACIONAL")
 user = current_user()
 session = get_session()
 

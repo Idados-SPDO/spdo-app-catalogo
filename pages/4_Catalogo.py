@@ -1,10 +1,12 @@
-# pages/1_Catalogo.py
 import streamlit as st
 import pandas as pd
+from io import BytesIO
+import hashlib
 from src.db_snowflake import apply_common_filters, build_user_options, get_session, load_user_display_map
 from src.utils import order_catalogo
-from src.auth import init_auth, is_authenticated
+from src.auth import require_roles, current_user
 from src.variables import FQN_APR
+
 
 # ===== Helpers =====
 ORDER_CATALOGO = [
@@ -43,13 +45,61 @@ def build_datetime_column_config(df: pd.DataFrame, cols: list[str]) -> dict:
     return cfg
 
 # ===== Auth & page =====
-init_auth()
-if not is_authenticated():
-    st.error("Faça login para continuar.")
-    st.stop()
+require_roles("USER", "OPERACIONAL", "ADMIN")
+user = current_user()
+role = (user.get("role") or "USER").upper().strip()
+is_user_role = role == "USER"
 
 st.set_page_config(page_title="Catálogo • Lista", layout="wide")
 st.title("📚 Catálogo de Insumos")
+
+USER_COLS_SPEC = [
+    ("Código do Insumo",   "INSUMO"),
+    ("ID FGV",             "ID"),
+    ("EAN",                "CODIGO_PRODUTO"),
+    ("Categoria",          "CATEGORIA"),
+    ("Grupo de Insumo",    "FAMILIA"),
+    ("Descrição",          "SINONIMO"),
+    ("Marca",              "MARCA"),
+    ("Fabricante",         "MARCA"),        # duplicado propositalmente
+    ("Quantidade",         "QTD_MED"),
+    ("Unidade de Medida",  "UN_MED"),
+    ("Embalagem",          "EMB_PRODUTO"),
+]
+
+def build_user_view(df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame(index=df.index)
+
+    out["Prioridade"] = pd.Series([pd.NA] * len(df), index=df.index, dtype="Int64")
+
+    for new_name, snow_name in USER_COLS_SPEC:
+        if snow_name in df.columns:
+            out[new_name] = df[snow_name]
+        else:
+            out[new_name] = pd.NA
+
+    if "EAN" in out.columns:
+        s = out["EAN"]
+        out["EAN"] = (
+            s.astype("string")
+             .str.replace(r"\.0$", "", regex=True)
+             .str.strip()
+        )
+
+    return out
+
+def df_to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "catalogo") -> bytes:
+    df_x = df.copy()
+
+    # Formata datetimes para Excel (evita problemas e deixa legível)
+    for c in df_x.columns:
+        if pd.api.types.is_datetime64_any_dtype(df_x[c]):
+            df_x[c] = df_x[c].dt.strftime("%d/%m/%Y %H:%M")
+
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        df_x.to_excel(writer, index=False, sheet_name=sheet_name)
+    return bio.getvalue()
 
 # ===== Dados =====
 session = get_session()
@@ -96,4 +146,19 @@ df_filtrado = df[mask].copy()
 # ===== Tabela =====
 st.caption(f"Itens no catalogo: **{len(df_filtrado)}**")
 
-st.dataframe(df_filtrado, width="stretch", hide_index=True,  column_config=dt_cfg)
+if is_user_role:
+    df_display = build_user_view(df_filtrado).reset_index(drop=True)
+    st.dataframe(df_display, hide_index=True, use_container_width=True)
+else:
+    df_display = df_filtrado.copy()
+    st.dataframe(df_display, hide_index=True, use_container_width=True, column_config=dt_cfg)
+
+# ===== Download XLSX (abaixo da tabela) =====
+xlsx_bytes = df_to_xlsx_bytes(df_display, sheet_name="catalogo_filtrado")
+st.download_button(
+    label="⬇️ Baixar XLSX",
+    data=xlsx_bytes,
+    file_name=f"catalogo_filtrado_{role.lower()}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    use_container_width=True,
+)

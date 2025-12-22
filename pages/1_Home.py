@@ -1,5 +1,6 @@
 import streamlit as st
-
+from src.auth import require_roles
+require_roles("USER", "OPERACIONAL", "ADMIN")
 
 st.title("📦 SPDO App Catálogo de Insumos")
 st.markdown(

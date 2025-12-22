@@ -1,15 +1,12 @@
 import streamlit as st
 import pandas as pd
 from src.db_snowflake import apply_common_filters, build_user_options, get_session, load_user_display_map, log_atualizacao, fetch_row_snapshot
-from src.auth import init_auth, is_authenticated, current_user
+from src.auth import require_roles, current_user
 from src.utils import extrair_valores, gerar_sinonimo, gerar_palavra_chave
 from src.variables import FQN_APR
 
 
-init_auth()
-if not is_authenticated():
-    st.error("Faça login para continuar.")
-    st.stop()
+require_roles("ADMIN")
 
 st.set_page_config(page_title="Catálogo • Atualização", layout="wide")
 st.title("🛠️ Atualização de Insumos")
@@ -113,7 +110,6 @@ edited = st.data_editor(
     hide_index=True,
     disabled=disabled_cols,
     column_config={
-        "QTD_MED": st.column_config.NumberColumn(format="%.2f"),
         "QTD_EMB_COMERCIAL": st.column_config.NumberColumn(format="%d"),
         **dt_cfg,
     },

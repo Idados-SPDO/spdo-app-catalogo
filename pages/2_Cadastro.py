@@ -3,13 +3,11 @@ import streamlit as st
 from src.db_snowflake import codigo_produto_exists_any, fetch_existing_codigos_dual, get_session, insert_item
 from src.utils import data_hoje, extrair_valores, campos_obrigatorios_ok, gerar_sinonimo, gerar_palavra_chave, _pick, _to_float_safe, _to_int_safe, gerar_template_excel_catalogo
 from io import BytesIO
-from src.auth import init_auth, is_authenticated, current_user
+from src.auth import current_user, require_roles
 import numpy as np
 
-init_auth()
-if not is_authenticated():
-    st.error("Faça login para continuar.")
-    st.stop()
+require_roles("OPERACIONAL", "ADMIN")
+
     
 st.set_page_config(page_title="Catálogo • Cadastro", layout="wide")
 st.title("📝 Cadastro de Insumos")
