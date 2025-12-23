@@ -1,14 +1,23 @@
 import streamlit as st
 import pandas as pd
-from src.db_snowflake import apply_common_filters, build_user_options, get_session, listar_itens_df, load_user_display_map, log_validacao, log_reprovacao
-from src.auth import init_auth, is_authenticated, current_user, require_roles
-from src.utils import extrair_valores, gerar_sinonimo 
+
+from src.db_snowflake import (
+    apply_common_filters,
+    build_user_options,
+    get_session,
+    listar_itens_df,
+    load_user_display_map,
+    log_validacao,
+    log_reprovacao,
+)
+from src.auth import init_auth, current_user, require_roles
+from src.utils import extrair_valores, gerar_sinonimo
 from src.variables import FQN_MAIN, FQN_COR, FQN_APR
+
 
 # ==============================
 # Constantes / Config
 # ==============================
-
 ORDER_VALIDACAO = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
@@ -16,6 +25,7 @@ ORDER_VALIDACAO = [
     "SINONIMO","PALAVRA_CHAVE","DATA_CADASTRO","USUARIO_CADASTRO","REFERENCIA",
 ]
 
+# (mantido caso você ainda use em outras partes / futuras evoluções)
 ORDER_CORRECOES = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
@@ -28,16 +38,17 @@ ORDER_CORRECOES = [
 
 EDITABLE_COR_COLS = [
     "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA","TIPO_CODIGO","CODIGO_PRODUTO",
-    "INSUMO","ITEM","DESCRICAO","ESPECIFICACAO","MARCA","QTD_EMB_PRODUTO", 
+    "INSUMO","ITEM","DESCRICAO","ESPECIFICACAO","MARCA","QTD_EMB_PRODUTO",
     "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","REFERENCIA"
 ]
+
 
 # ==============================
 # Helpers
 # ==============================
 def sql_str(v):
-    if v is None or (isinstance(v, float) and pd.isna(v)): 
+    if v is None or (isinstance(v, float) and pd.isna(v)):
         return "NULL"
     s = str(v).replace("'", "''")
     return f"'{s}'"
@@ -70,9 +81,7 @@ def build_datetime_column_config(df: pd.DataFrame, cols: list[str]) -> dict:
             cfg[c] = st.column_config.TextColumn(disabled=True)
     return cfg
 
-
 def _sql_escape(val):
-    import pandas as pd
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return "NULL"
     if isinstance(val, (int, float)):
@@ -116,14 +125,12 @@ def _recalc_sinonimo_df_inplace(df: pd.DataFrame) -> pd.DataFrame:
         df["DESCRICAO"] = ""
 
     def _calc(row):
-        # monta um dict estilo "row_after" (igual 5_Atualizacao)
         row_after = row.to_dict()
         novo_desc = _build_desc(row_after)
         row_after["DESCRICAO"] = novo_desc
         return novo_desc, _build_sinonimo_like_update(row_after)
 
     out = df.apply(lambda r: pd.Series(_calc(r), index=["__DESC_NEW__", "__SIN_NEW__"]), axis=1)
-    # aplica descrição nova apenas se a atual estiver vazia/nula (mesmo critério do helper)
     mask_apply_desc = df["DESCRICAO"].astype(str).str.strip().eq("") | df["DESCRICAO"].isna()
     df.loc[mask_apply_desc, "DESCRICAO"] = out["__DESC_NEW__"]
     df["SINONIMO"] = out["__SIN_NEW__"]
@@ -136,16 +143,14 @@ def _persist_sinonimo_batch(session, table_fqn: str, df_ids: pd.DataFrame, id_co
       - Atualiza SINONIMO (sempre com o valor recalculado)
     Usa CASE ... WHEN ... THEN ... para eficiência.
     """
-    import pandas as pd
     if df_ids.empty or id_col not in df_ids or "SINONIMO" not in df_ids:
         return
 
-    # Garantir colunas
     work = df_ids[[id_col, "SINONIMO"]].copy()
     has_desc = "DESCRICAO" in df_ids.columns
     if has_desc:
         work["__DESC_APPLY__"] = df_ids["DESCRICAO"]
-    # prepara pares
+
     pairs = []
     for _, r in work.iterrows():
         _id = int(r[id_col])
@@ -163,9 +168,10 @@ def _persist_sinonimo_batch(session, table_fqn: str, df_ids: pd.DataFrame, id_co
 
     sets = [f"SINONIMO = CASE {id_col} {when_sin} END"]
     if has_desc:
-        # Atualiza DESCRICAO somente quando veio calculada (evitar sobrepor se usuário alterou manualmente)
-        when_desc = " ".join([f"WHEN {i} THEN {_sql_escape(d) if d is not None else 'DESCRICAO'}"
-                              for (i, _, d) in pairs])
+        when_desc = " ".join([
+            f"WHEN {i} THEN {_sql_escape(d) if d is not None else 'DESCRICAO'}"
+            for (i, _, d) in pairs
+        ])
         sets.append(f"DESCRICAO = CASE {id_col} {when_desc} END")
 
     sql = f"""
@@ -175,7 +181,6 @@ def _persist_sinonimo_batch(session, table_fqn: str, df_ids: pd.DataFrame, id_co
     """
     session.sql(sql).collect()
 
-
 def _persist_insumo_batch(session, table_fqn: str, df_before: pd.DataFrame, df_after: pd.DataFrame):
     """
     Atualiza INSUMO em lote (somente IDs que mudaram e INSUMO não vazio).
@@ -184,7 +189,6 @@ def _persist_insumo_batch(session, table_fqn: str, df_before: pd.DataFrame, df_a
     if df_after.empty or "ID" not in df_after.columns or "INSUMO" not in df_after.columns:
         return 0
 
-    # normaliza para comparar
     b = df_before[["ID", "INSUMO"]].copy()
     a = df_after[["ID", "INSUMO"]].copy()
     b["INSUMO"] = b["INSUMO"].astype("string").fillna("").str.strip()
@@ -193,19 +197,22 @@ def _persist_insumo_batch(session, table_fqn: str, df_before: pd.DataFrame, df_a
     merged = a.merge(b, on="ID", suffixes=("", "_OLD"))
 
     changed = merged.loc[
-        (merged["INSUMO"] != merged["INSUMO_OLD"]) & (merged["INSUMO"] != "")
-    , ["ID", "INSUMO"]].copy()
+        (merged["INSUMO"] != merged["INSUMO_OLD"]) & (merged["INSUMO"] != ""),
+        ["ID", "INSUMO"]
+    ].copy()
 
     if changed.empty:
         return 0
 
-    # schema para metadados opcionais
     cols_tbl = {c.name.upper() for c in session.table(table_fqn).schema}
 
     ids = [int(x) for x in changed["ID"].tolist()]
     ids_csv = ", ".join(str(i) for i in ids)
 
-    when_ins = " ".join([f"WHEN {int(r.ID)} THEN {_sql_escape(r.INSUMO)}" for r in changed.itertuples(index=False)])
+    when_ins = " ".join([
+        f"WHEN {int(r.ID)} THEN {_sql_escape(r.INSUMO)}"
+        for r in changed.itertuples(index=False)
+    ])
 
     sets = [f"INSUMO = CASE ID {when_ins} END"]
 
@@ -223,10 +230,11 @@ def _persist_insumo_batch(session, table_fqn: str, df_before: pd.DataFrame, df_a
     session.sql(sql).collect()
     return len(ids)
 
+
 # ==============================
 # Ações de Banco
 # ==============================
-def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
+def apply_decision(session, df_items: pd.DataFrame, user: dict, ids: list[int], decisao: str, obs: str | None):
     """
     APROVADO  -> move de FQN_MAIN -> FQN_APR, audita e deleta da principal
     REJEITADO -> move de FQN_MAIN -> FQN_COR, audita e deleta da principal
@@ -237,14 +245,11 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
     session.sql("ALTER SESSION SET TIMEZONE = 'America/Sao_Paulo'").collect()
     ids_csv = ", ".join(str(i) for i in ids)
 
-
-    # 2) Colunas comuns (principal -> destino)
     get_cols = lambda table_fqn: [c.name for c in session.table(table_fqn).schema]
     cols_main = get_cols(FQN_MAIN)
 
-    # inicializa para evitar NameError
     sql_move_insert = None
-    sql_move_meta   = None
+    sql_move_meta = None
     toast_icon = "✅"
     destino_legenda = "Aprovados"
 
@@ -263,10 +268,9 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
         cols_apr_all = get_cols(target)
         meta_sets = []
         if "USUARIO_APROVACAO" in cols_apr_all:
-            meta_sets.append(f"USUARIO_APROVACAO = {sql_str(user['name'])}")
+            meta_sets.append(f"USUARIO_APROVACAO = {sql_str(user.get('name'))}")
         if "DATA_APROVACAO" in cols_apr_all:
             meta_sets.append("DATA_APROVACAO = CURRENT_TIMESTAMP()")
-
 
         if meta_sets:
             sql_move_meta = f"""
@@ -277,6 +281,7 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
 
         toast_icon = "✅"
         destino_legenda = "Aprovados"
+
         for _id in ids:
             try:
                 cod = None
@@ -287,7 +292,7 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
                     session,
                     item_id=_id,
                     codigo_produto=cod,
-                    origem=FQN_MAIN,          # ou FQN_COR se a aprovação estiver vindo de correções (depende do teu fluxo)
+                    origem=FQN_MAIN,
                     destino=FQN_APR,
                     obs=obs,
                     user=user,
@@ -308,13 +313,14 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
         """
         sql_move_meta = f"""
             UPDATE {target}
-            SET USUARIO_REPROVACAO = {sql_str(user['name'])},
+            SET USUARIO_REPROVACAO = {sql_str(user.get('name'))},
                 DATA_REPROVACAO    = CURRENT_TIMESTAMP(),
                 MOTIVO             = {sql_str(obs)}
             WHERE ID IN ({ids_csv})
         """
         toast_icon = "❌"
         destino_legenda = "Correção"
+
         for _id in ids:
             try:
                 cod = None
@@ -333,10 +339,8 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
             except Exception:
                 pass
 
-    # 3) Delete da principal
     sql_delete_main = f"DELETE FROM {FQN_MAIN} WHERE ID IN ({ids_csv})"
 
-    # 4) Transação atômica
     try:
         session.sql("BEGIN").collect()
         session.sql(sql_move_insert).collect()
@@ -349,89 +353,14 @@ def apply_decision(session, df_items, user, ids, decisao: str, obs: str | None):
         session.sql("ROLLBACK").collect()
         st.error(f"Falha ao mover itens: {e}")
 
-def approve_correcoes(session, edited_df: pd.DataFrame, ids: list[int], user: dict):
-    """
-    Atualiza os campos editados em FQN_COR, move para FQN_APR, audita e remove da FQN_COR.
-    """
-    if not ids:
-        return
-
-    session.sql("ALTER SESSION SET TIMEZONE = 'America/Sao_Paulo'").collect()
-
-    # mapa id -> linha editada (somente ids selecionados)
-    edited_map = {int(r["ID"]): r for _, r in edited_df.iterrows() if int(r["ID"]) in ids}
-
-    # Colunas comuns para mover
-    cols_cor   = [c.name for c in session.table(FQN_COR).schema]
-    cols_aprov = [c.name for c in session.table(FQN_APR).schema]
-    common_cols = [c for c in cols_cor if c in cols_aprov]
-    col_list = ", ".join(common_cols)
-
-    # Auditoria
-    values_audit = []
-    for _id in ids:
-        row = edited_map[_id]
-        cod = None if pd.isna(row.get("CODIGO_PRODUTO")) else str(row.get("CODIGO_PRODUTO"))
-        values_audit.append(
-            f"({_id}, {sql_str(cod)}, 'APROVADO', {sql_str('Aprovado após correção')}, {sql_str(user['username'])}, {sql_str(user['name'])})"
-        )
-
-    try:
-        session.sql("BEGIN").collect()
-
-        # 1) UPDATE no CORRECOES com os campos editáveis
-        for _id in ids:
-            row = edited_map[_id]
-            sets = []
-            for c in EDITABLE_COR_COLS:
-                if c in row:
-                    sets.append(f'{c} = {sql_str(row[c])}')
-            if sets:
-                sql_upd = f"UPDATE {FQN_COR} SET {', '.join(sets)}, DATA_ATUALIZACAO = CURRENT_TIMESTAMP() WHERE ID = {_id}"
-                session.sql(sql_upd).collect()
-
-        # 2) Move para APROVADOS
-        sql_insert = f"""
-            INSERT INTO {FQN_APR} ({col_list})
-            SELECT {col_list}
-            FROM {FQN_COR}
-            WHERE ID IN ({", ".join(str(i) for i in ids)})
-        """
-        session.sql(sql_insert).collect()
-
-        # 3) Metadados de aprovação (se existirem as colunas)
-        cols_apr_all = [c.name for c in session.table(FQN_APR).schema]
-        meta_sets = []
-        if "USUARIO_APROVACAO" in cols_apr_all:
-            meta_sets.append(f"USUARIO_APROVACAO = {sql_str(user['name'])}")
-        if "DATA_APROVACAO" in cols_apr_all:
-            meta_sets.append("DATA_APROVACAO = CURRENT_TIMESTAMP()")
-
-        if meta_sets:
-            session.sql(f"""
-                UPDATE {FQN_APR}
-                SET {', '.join(meta_sets)}
-                WHERE ID IN ({", ".join(str(i) for i in ids)})
-            """).collect()
-
-
-        # 5) Remove do CORRECOES
-        session.sql(f"DELETE FROM {FQN_COR} WHERE ID IN ({', '.join(str(i) for i in ids)})").collect()
-
-        session.sql("COMMIT").collect()
-        st.toast(f"{len(ids)} item(ns) aprovados e movidos para o Catálogo.", icon="✅")
-    except Exception as e:
-        session.sql("ROLLBACK").collect()
-        st.error(f"Falha ao aprovar correções: {e}")
-
-# ---------- Aba: Pendente de Validação ----------
 
 # ==============================
-# Página (SEM TABS)
+# Página (SEM TABS) - Validação
 # ==============================
+st.set_page_config(page_title="Catálogo • Validação", layout="wide")
+init_auth()
 require_roles("ADMIN")
 
-st.set_page_config(page_title="Catálogo • Validação", layout="wide")
 st.title("✅ Validação de Itens")
 
 user = current_user()
@@ -447,7 +376,7 @@ if df_all.empty:
 user_map = load_user_display_map(session)
 
 # ------------------------------
-# Filtros (únicos)
+# Filtros
 # ------------------------------
 st.subheader("Filtros")
 c1, c2, c3, c4 = st.columns(4)
@@ -483,7 +412,7 @@ if df_view_before.empty:
 st.caption(f"Itens no banco (filtro aplicado): **{len(df_view_before)}**")
 
 # ------------------------------
-# Monta view editável (Validar + INSUMO)
+# View editável (Validar + INSUMO)
 # ------------------------------
 df_view = df_view_before.copy()
 
@@ -496,36 +425,26 @@ with left_sel:
 if select_all_val:
     df_view["Validar"] = True
 
-# Recalcula sinonimo/descricao na tela (opcional: manter igual sua lógica atual)
 df_view = _recalc_sinonimo_df_inplace(df_view)
 
-# (opcional) persistir sinonimo sempre que renderiza (mantive igual você tinha)
+# (opcional) persistir sinonimo sempre que renderiza
 try:
     _persist_sinonimo_batch(session, FQN_MAIN, df_view[["ID", "DESCRICAO", "SINONIMO"]])
 except Exception as e:
     st.warning(f"Não foi possível atualizar SINONIMO/descrição (pendentes): {e}")
 
-# Datas
 DT_COLS_VAL = ["DATA_CADASTRO"]
 df_view = coerce_datetimes(df_view, DT_COLS_VAL)
 dt_cfg_val = build_datetime_column_config(df_view, DT_COLS_VAL)
 
-# Reordena levando Validar pro início
 df_view = reorder(df_view, ORDER_VALIDACAO, prepend=["Validar"])
 
-# Column config: travar tudo exceto Validar e INSUMO
 col_cfg_all = {}
 for c in df_view.columns:
     if c == "Validar":
-        col_cfg_all[c] = st.column_config.CheckboxColumn(
-            label="Validar",
-            help="Marque para incluir na ação.",
-        )
+        col_cfg_all[c] = st.column_config.CheckboxColumn(label="Validar", help="Marque para incluir na ação.")
     elif c == "INSUMO":
-        col_cfg_all[c] = st.column_config.TextColumn(
-            label="INSUMO",
-            help="Preencha/ajuste o INSUMO antes de aprovar.",
-        )
+        col_cfg_all[c] = st.column_config.TextColumn(label="INSUMO", help="Preencha/ajuste o INSUMO antes de aprovar.")
     elif c in dt_cfg_val:
         col_cfg_all[c] = dt_cfg_val[c]
     else:
@@ -541,26 +460,7 @@ edited = st.data_editor(
     column_order=list(df_view.columns),
 )
 
-# ------------------------------
-# Salvar INSUMO (mesma tela)
-# ------------------------------
-st.markdown("---")
-c_save, c_hint = st.columns([1, 3])
-with c_save:
-    if st.button("💾 Salvar INSUMO", use_container_width=True):
-        try:
-            # df_view_before = antes; edited = depois
-            n = _persist_insumo_batch(session, FQN_MAIN, df_view_before, edited)
-            if n == 0:
-                st.info("Nenhuma alteração válida detectada (ou INSUMO ficou vazio).")
-            else:
-                st.success(f"INSUMO atualizado para {n} item(ns).")
-                st.rerun()
-        except Exception as e:
-            st.error(f"Falha ao salvar INSUMO: {e}")
-
-with c_hint:
-    st.caption("Dica: itens selecionados sem INSUMO preenchido não serão aprovados/rejeitados.")
+st.caption("Itens selecionados sem INSUMO preenchido não entram em Aprovar/Rejeitar.")
 
 # ------------------------------
 # Seleção para Aprovar/Rejeitar
@@ -568,13 +468,12 @@ with c_hint:
 sel_mask = edited["Validar"] == True
 ids_sel_all = edited.loc[sel_mask, "ID"].tolist()
 
-# só deixa aprovar/rejeitar se INSUMO estiver preenchido
 def _filled_insumo(s: pd.Series) -> pd.Series:
     return s.astype("string").fillna("").str.strip().ne("")
 
 if ids_sel_all:
     sel_rows = edited[edited["ID"].isin(ids_sel_all)].copy()
-    ok_mask = _filled_insumo(sel_rows["INSUMO"]) if "INSUMO" in sel_rows.columns else pd.Series([True] * len(sel_rows))
+    ok_mask = _filled_insumo(sel_rows["INSUMO"]) if "INSUMO" in sel_rows.columns else pd.Series([True] * len(sel_rows), index=sel_rows.index)
     ids_sel_ok = sel_rows.loc[ok_mask, "ID"].tolist()
     ids_sel_bad = sel_rows.loc[~ok_mask, "ID"].tolist()
 else:
@@ -597,15 +496,14 @@ with colB:
         st.session_state.open_reprova = True
 
 @st.dialog("Confirmar aprovação")
-def dlg_aprova(ids):
+def dlg_aprova(ids: list[int]):
     st.write(f"Você vai **APROVAR** {len(ids)} item(ns).")
     obs = st.text_area("Observação (opcional)", key="dlg_obs_aprova")
 
-    # sincroniza INSUMO/SINONIMO para os selecionados (estado atual do editor)
     try:
         sel_edited = edited[edited["ID"].isin(ids)].copy()
         sel_edited = _recalc_sinonimo_df_inplace(sel_edited)
-        _persist_sinonimo_batch(session, FQN_MAIN, sel_edited[["ID","DESCRICAO","SINONIMO"]])
+        _persist_sinonimo_batch(session, FQN_MAIN, sel_edited[["ID", "DESCRICAO", "SINONIMO"]])
         _persist_insumo_batch(session, FQN_MAIN, df_all[df_all["ID"].isin(ids)].copy(), sel_edited)
     except Exception as e:
         st.warning(f"Falha ao sincronizar campos antes da aprovação: {e}")
@@ -619,15 +517,14 @@ def dlg_aprova(ids):
         st.button("Cancelar", key="cancelA")
 
 @st.dialog("Confirmar rejeição")
-def dlg_reprova(ids):
+def dlg_reprova(ids: list[int]):
     st.write(f"Você vai **REJEITAR** {len(ids)} item(ns).")
     obs = st.text_area("Motivo/observação (opcional)", key="dlg_obs_reprova")
 
-    # sincroniza INSUMO/SINONIMO para os selecionados (estado atual do editor)
     try:
         sel_edited = edited[edited["ID"].isin(ids)].copy()
         sel_edited = _recalc_sinonimo_df_inplace(sel_edited)
-        _persist_sinonimo_batch(session, FQN_MAIN, sel_edited[["ID","DESCRICAO","SINONIMO"]])
+        _persist_sinonimo_batch(session, FQN_MAIN, sel_edited[["ID", "DESCRICAO", "SINONIMO"]])
         _persist_insumo_batch(session, FQN_MAIN, df_all[df_all["ID"].isin(ids)].copy(), sel_edited)
     except Exception as e:
         st.warning(f"Falha ao sincronizar campos antes da rejeição: {e}")
