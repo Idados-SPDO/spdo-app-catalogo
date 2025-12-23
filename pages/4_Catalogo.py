@@ -1,5 +1,3 @@
-import streamlit as st
-import pandas as pd
 from io import BytesIO
 
 from src.db_snowflake import (
@@ -50,6 +48,7 @@ def coerce_datetimes(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
         if c in df.columns:
             df[c] = pd.to_datetime(df[c], errors="coerce", utc=False)
             try:
+
                 if getattr(df[c].dt, "tz", None) is not None:
                     df[c] = df[c].dt.tz_localize(None)
             except Exception:
@@ -62,6 +61,15 @@ def build_datetime_column_config(df: pd.DataFrame, cols: list[str]) -> dict:
         if c in df.columns and pd.api.types.is_datetime64_any_dtype(df[c]):
             cfg[c] = st.column_config.DatetimeColumn(format="DD/MM/YYYY HH:mm", disabled=True)
     return cfg
+
+
+
+
+
+
+
+
+
 
 USER_COLS_SPEC = [
     ("Código do Insumo",   "INSUMO"),
@@ -79,10 +87,14 @@ USER_COLS_SPEC = [
 
 def build_user_view(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=df.index)
+
     out["Prioridade"] = pd.Series([pd.NA] * len(df), index=df.index, dtype="Int64")
 
     for new_name, snow_name in USER_COLS_SPEC:
         out[new_name] = df[snow_name] if snow_name in df.columns else pd.NA
+
+
+
 
     if "EAN" in out.columns:
         s = out["EAN"]
@@ -91,10 +103,13 @@ def build_user_view(df: pd.DataFrame) -> pd.DataFrame:
              .str.replace(r"\.0$", "", regex=True)
              .str.strip()
         )
+
     return out
 
 def df_to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "catalogo") -> bytes:
     df_x = df.copy()
+
+
     for c in df_x.columns:
         if pd.api.types.is_datetime64_any_dtype(df_x[c]):
             df_x[c] = df_x[c].dt.strftime("%d/%m/%Y %H:%M")
@@ -119,6 +134,7 @@ except Exception as e:
 if df.empty:
     st.info("Nenhum item aprovado ainda.")
     st.stop()
+
 
 df = reorder(df, ORDER_CATALOGO)
 
