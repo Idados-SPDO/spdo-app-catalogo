@@ -424,10 +424,11 @@ def approve_correcoes(session, edited_df: pd.DataFrame, ids: list[int], user: di
         session.sql("ROLLBACK").collect()
         st.error(f"Falha ao aprovar correções: {e}")
 
+# ---------- Aba: Pendente de Validação ----------
+
 # ==============================
-# Página
+# Página (SEM TABS)
 # ==============================
-# Auth
 require_roles("ADMIN")
 
 st.set_page_config(page_title="Catálogo • Validação", layout="wide")
@@ -437,221 +438,212 @@ user = current_user()
 session = get_session()
 session.sql("ALTER SESSION SET TIMEZONE = 'America/Sao_Paulo'").collect()
 
-# ---------- Aba: Pendente de Validação ----------
-
 df_all = listar_itens_df(session)
 
-df_validacao_base = df_all[
-    df_all["INSUMO"].notna() & df_all["INSUMO"].astype("string").str.strip().ne("")
-].copy()
-
-# sem INSUMO (para Aba 2)
-df_missing_base = df_all[
-    df_all["INSUMO"].isna() | df_all["INSUMO"].astype("string").str.strip().eq("")
-].copy()
-
 if df_all.empty:
-        st.info("Nenhum item cadastrado ainda.")
-else:
-        user_map = load_user_display_map(session)
+    st.info("Nenhum item cadastrado ainda.")
+    st.stop()
 
-        tab1, tab2 = st.tabs(["Validação", "Criação de Insumo"])
-        
-        with tab1:
-            st.subheader("Filtros")
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                sel_user = st.selectbox(
-                "Usuário",
-                build_user_options(df_all, user_map),  # <- retorna só labels legíveis
-                index=0,
-                key="val_sel_user"
-            )
-            with c2:
-                f_insumo = st.text_input("Insumo", key="val_f_insumo")
-            with c3:
-                f_codigo = st.text_input("Código do Produto", key="val_f_codigo")
-            with c4:
-                f_palavra = st.text_input("Palavra-chave", key="val_f_palavra")
+user_map = load_user_display_map(session)
 
-            mask = apply_common_filters(
-                df_validacao_base,
-                sel_user_name=sel_user,   # <- passa o *nome de exibição* selecionado
-                f_insumo=f_insumo,
-                f_codigo=f_codigo,
-                f_palavra=f_palavra,
-                user_map=user_map,
-            )
+# ------------------------------
+# Filtros (únicos)
+# ------------------------------
+st.subheader("Filtros")
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    sel_user = st.selectbox(
+        "Usuário",
+        build_user_options(df_all, user_map),
+        index=0,
+        key="val_sel_user",
+    )
+with c2:
+    f_insumo = st.text_input("Insumo", key="val_f_insumo")
+with c3:
+    f_codigo = st.text_input("Código do Produto", key="val_f_codigo")
+with c4:
+    f_palavra = st.text_input("Palavra-chave", key="val_f_palavra")
 
-            df_view = df_validacao_base[mask].copy()
-            if df_view.empty:
-                st.info("Nenhum item com os filtros aplicados.")
-                ids_sel = []
+mask = apply_common_filters(
+    df_all,
+    sel_user_name=sel_user,
+    f_insumo=f_insumo,
+    f_codigo=f_codigo,
+    f_palavra=f_palavra,
+    user_map=user_map,
+)
+
+df_view_before = df_all[mask].copy()
+
+if df_view_before.empty:
+    st.info("Nenhum item com os filtros aplicados.")
+    st.stop()
+
+st.caption(f"Itens no banco (filtro aplicado): **{len(df_view_before)}**")
+
+# ------------------------------
+# Monta view editável (Validar + INSUMO)
+# ------------------------------
+df_view = df_view_before.copy()
+
+if "Validar" not in df_view.columns:
+    df_view.insert(0, "Validar", False)
+
+left_sel, _ = st.columns([1, 3])
+with left_sel:
+    select_all_val = st.checkbox("Selecionar todos", key="val_select_all")
+if select_all_val:
+    df_view["Validar"] = True
+
+# Recalcula sinonimo/descricao na tela (opcional: manter igual sua lógica atual)
+df_view = _recalc_sinonimo_df_inplace(df_view)
+
+# (opcional) persistir sinonimo sempre que renderiza (mantive igual você tinha)
+try:
+    _persist_sinonimo_batch(session, FQN_MAIN, df_view[["ID", "DESCRICAO", "SINONIMO"]])
+except Exception as e:
+    st.warning(f"Não foi possível atualizar SINONIMO/descrição (pendentes): {e}")
+
+# Datas
+DT_COLS_VAL = ["DATA_CADASTRO"]
+df_view = coerce_datetimes(df_view, DT_COLS_VAL)
+dt_cfg_val = build_datetime_column_config(df_view, DT_COLS_VAL)
+
+# Reordena levando Validar pro início
+df_view = reorder(df_view, ORDER_VALIDACAO, prepend=["Validar"])
+
+# Column config: travar tudo exceto Validar e INSUMO
+col_cfg_all = {}
+for c in df_view.columns:
+    if c == "Validar":
+        col_cfg_all[c] = st.column_config.CheckboxColumn(
+            label="Validar",
+            help="Marque para incluir na ação.",
+        )
+    elif c == "INSUMO":
+        col_cfg_all[c] = st.column_config.TextColumn(
+            label="INSUMO",
+            help="Preencha/ajuste o INSUMO antes de aprovar.",
+        )
+    elif c in dt_cfg_val:
+        col_cfg_all[c] = dt_cfg_val[c]
+    else:
+        col_cfg_all[c] = st.column_config.Column(disabled=True)
+
+edited = st.data_editor(
+    df_view,
+    num_rows="fixed",
+    hide_index=True,
+    use_container_width=True,
+    key="editor_validacao_unica",
+    column_config=col_cfg_all,
+    column_order=list(df_view.columns),
+)
+
+# ------------------------------
+# Salvar INSUMO (mesma tela)
+# ------------------------------
+st.markdown("---")
+c_save, c_hint = st.columns([1, 3])
+with c_save:
+    if st.button("💾 Salvar INSUMO", use_container_width=True):
+        try:
+            # df_view_before = antes; edited = depois
+            n = _persist_insumo_batch(session, FQN_MAIN, df_view_before, edited)
+            if n == 0:
+                st.info("Nenhuma alteração válida detectada (ou INSUMO ficou vazio).")
             else:
-                # coluna de ação
-                st.caption(f"Itens para validação no banco: **{len(df_view)}**")
-                if "Validar" not in df_view.columns:
-                    df_view.insert(0, "Validar", False)
-                left_sel, right_sel = st.columns([1, 3])
-                with left_sel:
-                    select_all_val = st.checkbox("Selecionar todos", key="val_select_all")
-                if select_all_val:
-                    df_view["Validar"] = True
+                st.success(f"INSUMO atualizado para {n} item(ns).")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Falha ao salvar INSUMO: {e}")
 
-                df_view = _recalc_sinonimo_df_inplace(df_view)
+with c_hint:
+    st.caption("Dica: itens selecionados sem INSUMO preenchido não serão aprovados/rejeitados.")
 
-                try:
-                    _persist_sinonimo_batch(session, FQN_MAIN, df_view[["ID", "DESCRICAO", "SINONIMO"]])
-                except Exception as e:
-                    st.warning(f"Não foi possível atualizar SINONIMO/descrição (pendentes): {e}")
+# ------------------------------
+# Seleção para Aprovar/Rejeitar
+# ------------------------------
+sel_mask = edited["Validar"] == True
+ids_sel_all = edited.loc[sel_mask, "ID"].tolist()
 
-                # datas formatadas
-                DT_COLS_VAL = ["DATA_CADASTRO"]
-                df_view = coerce_datetimes(df_view, DT_COLS_VAL)
-                dt_cfg_val = build_datetime_column_config(df_view, DT_COLS_VAL)
+# só deixa aprovar/rejeitar se INSUMO estiver preenchido
+def _filled_insumo(s: pd.Series) -> pd.Series:
+    return s.astype("string").fillna("").str.strip().ne("")
 
-                # reordena (leva "Validar" pro início)
-                df_view = reorder(df_view, ORDER_VALIDACAO, prepend=["Validar"])
+if ids_sel_all:
+    sel_rows = edited[edited["ID"].isin(ids_sel_all)].copy()
+    ok_mask = _filled_insumo(sel_rows["INSUMO"]) if "INSUMO" in sel_rows.columns else pd.Series([True] * len(sel_rows))
+    ids_sel_ok = sel_rows.loc[ok_mask, "ID"].tolist()
+    ids_sel_bad = sel_rows.loc[~ok_mask, "ID"].tolist()
+else:
+    ids_sel_ok, ids_sel_bad = [], []
 
-                # ==== travar tudo exceto "Validar" ====
-                col_cfg_all = {}
-                for c in df_view.columns:
-                    if c == "Validar":
-                        col_cfg_all[c] = st.column_config.CheckboxColumn(label="Validar", help="Marque para incluir na ação.")
-                    elif c in dt_cfg_val:
-                        # datas já com formato e travadas
-                        col_cfg_all[c] = dt_cfg_val[c]
-                    else:
-                        # genérico travado
-                        col_cfg_all[c] = st.column_config.Column(disabled=True)
+if ids_sel_bad:
+    st.warning(f"{len(ids_sel_bad)} selecionado(s) sem INSUMO preenchido: não entrarão na ação.")
 
-                edited = st.data_editor(
-                    df_view,
-                    num_rows="fixed",
-                    hide_index=True,
-                    width="stretch",
-                    key="editor_validacao",
-                    column_config=col_cfg_all,
-                    column_order=list(df_view.columns) 
-                ) # type: ignore
+colA, colB = st.columns([1, 1])
+with colA:
+    if "open_aprova" not in st.session_state:
+        st.session_state.open_aprova = False
+    if st.button("✅ Aprovar selecionados", disabled=(len(ids_sel_ok) == 0)):
+        st.session_state.open_aprova = True
 
-                sel_mask = edited["Validar"] == True
-                ids_sel = edited.loc[sel_mask, "ID"].tolist()
+with colB:
+    if "open_reprova" not in st.session_state:
+        st.session_state.open_reprova = False
+    if st.button("❌ Rejeitar selecionados", disabled=(len(ids_sel_ok) == 0)):
+        st.session_state.open_reprova = True
 
+@st.dialog("Confirmar aprovação")
+def dlg_aprova(ids):
+    st.write(f"Você vai **APROVAR** {len(ids)} item(ns).")
+    obs = st.text_area("Observação (opcional)", key="dlg_obs_aprova")
 
-            st.markdown("---")
-            colA, colB = st.columns([1, 1])
-            with colA:
-                if "open_aprova" not in st.session_state:
-                    st.session_state.open_aprova = False
-                btn_aprova = st.button("✅ Aprovar selecionados", disabled=(len(ids_sel) == 0))
-                if btn_aprova:
-                    st.session_state.open_aprova = True
-            with colB:
-                if "open_reprova" not in st.session_state:
-                    st.session_state.open_reprova = False
-                btn_reprova = st.button("❌ Rejeitar selecionados", disabled=(len(ids_sel) == 0))
-                if btn_reprova:
-                    st.session_state.open_reprova = True
+    # sincroniza INSUMO/SINONIMO para os selecionados (estado atual do editor)
+    try:
+        sel_edited = edited[edited["ID"].isin(ids)].copy()
+        sel_edited = _recalc_sinonimo_df_inplace(sel_edited)
+        _persist_sinonimo_batch(session, FQN_MAIN, sel_edited[["ID","DESCRICAO","SINONIMO"]])
+        _persist_insumo_batch(session, FQN_MAIN, df_all[df_all["ID"].isin(ids)].copy(), sel_edited)
+    except Exception as e:
+        st.warning(f"Falha ao sincronizar campos antes da aprovação: {e}")
 
-            @st.dialog("Confirmar aprovação")
-            def dlg_aprova(ids):
-                st.write(f"Você vai **APROVAR** {len(ids)} item(ns).")
-                obs = st.text_area("Observação (opcional)", key="dlg_obs_aprova")
-                try:
-                    sel_df = df_validacao_base[df_validacao_base["ID"].isin(ids)].copy()
-                    sel_df = _recalc_sinonimo_df_inplace(sel_df)
-                    _persist_sinonimo_batch(session, FQN_MAIN, sel_df[["ID","DESCRICAO","SINONIMO"]])
-                except Exception as e:
-                    st.warning(f"Falha ao sincronizar SINONIMO antes da aprovação: {e}")
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Confirmar ✅", type="primary"):
-                        apply_decision(session, df_validacao_base, user, ids, "APROVADO", obs)
-                        st.rerun()
-                with c2:
-                    st.button("Cancelar", key="cancelA")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Confirmar ✅", type="primary"):
+            apply_decision(session, df_all, user, ids, "APROVADO", obs)
+            st.rerun()
+    with c2:
+        st.button("Cancelar", key="cancelA")
 
-            @st.dialog("Confirmar rejeição")
-            def dlg_reprova(ids):
-                st.write(f"Você vai **REJEITAR** {len(ids)} item(ns).")
-                obs = st.text_area("Motivo/observação (opcional)", key="dlg_obs_reprova")
-                try:
-                    sel_df = df_validacao_base[df_validacao_base["ID"].isin(ids)].copy()
-                    sel_df = _recalc_sinonimo_df_inplace(sel_df)
-                    _persist_sinonimo_batch(session, FQN_MAIN, sel_df[["ID","DESCRICAO","SINONIMO"]])
-                except Exception as e:
-                    st.warning(f"Falha ao sincronizar SINONIMO antes da rejeição: {e}")
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Confirmar ❌", type="primary"):
-                        apply_decision(session, df_validacao_base, user, ids, "REJEITADO", obs)
-                        st.rerun()
-                with c2:
-                    st.button("Cancelar", key="cancelR")
+@st.dialog("Confirmar rejeição")
+def dlg_reprova(ids):
+    st.write(f"Você vai **REJEITAR** {len(ids)} item(ns).")
+    obs = st.text_area("Motivo/observação (opcional)", key="dlg_obs_reprova")
 
-            if st.session_state.get("open_aprova"):
-                st.session_state.open_aprova = False
-                dlg_aprova(ids_sel)
+    # sincroniza INSUMO/SINONIMO para os selecionados (estado atual do editor)
+    try:
+        sel_edited = edited[edited["ID"].isin(ids)].copy()
+        sel_edited = _recalc_sinonimo_df_inplace(sel_edited)
+        _persist_sinonimo_batch(session, FQN_MAIN, sel_edited[["ID","DESCRICAO","SINONIMO"]])
+        _persist_insumo_batch(session, FQN_MAIN, df_all[df_all["ID"].isin(ids)].copy(), sel_edited)
+    except Exception as e:
+        st.warning(f"Falha ao sincronizar campos antes da rejeição: {e}")
 
-            if st.session_state.get("open_reprova"):
-                st.session_state.open_reprova = False
-                dlg_reprova(ids_sel)
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Confirmar ❌", type="primary"):
+            apply_decision(session, df_all, user, ids, "REJEITADO", obs)
+            st.rerun()
+    with c2:
+        st.button("Cancelar", key="cancelR")
 
-        with tab2:
-            st.subheader("Criação de Insumo (itens sem INSUMO)")
+if st.session_state.get("open_aprova"):
+    st.session_state.open_aprova = False
+    dlg_aprova(ids_sel_ok)
 
-            if "INSUMO" not in df_all.columns:
-                st.error("A coluna INSUMO não existe no dataframe carregado (listar_itens_df).")
-                st.stop()
-
-            # somente itens com INSUMO vazio/NULL
-            df_missing = df_all[df_all["INSUMO"].isna() | df_all["INSUMO"].astype("string").str.strip().eq("")].copy()
-
-            if df_missing.empty:
-                st.success("Nenhum item pendente de preenchimento de INSUMO.")
-                st.stop()
-
-            st.caption(f"Itens sem INSUMO: **{len(df_missing)}**")
-
-            # (opcional) escolhe colunas mais úteis para essa tela
-            wanted_cols = [
-                "ID", "CODIGO_PRODUTO", "ITEM", "DESCRICAO", "ESPECIFICACAO", "MARCA",
-                "QTD_MED", "UN_MED", "EMB_PRODUTO",
-                "INSUMO", "USUARIO_CADASTRO", "DATA_CADASTRO"
-            ]
-            cols_show = [c for c in wanted_cols if c in df_missing.columns]
-            df_missing = df_missing[cols_show]
-
-            # tabela: tudo travado exceto INSUMO
-            col_cfg = {}
-            for c in df_missing.columns:
-                if c == "INSUMO":
-                    col_cfg[c] = st.column_config.TextColumn(label="INSUMO", help="Preencha o INSUMO.", required=True)
-                else:
-                    col_cfg[c] = st.column_config.Column(disabled=True)
-
-            edited_insumo = st.data_editor(
-                df_missing,
-                num_rows="fixed",
-                hide_index=True,
-                use_container_width=True,
-                key="editor_criacao_insumo",
-                column_config=col_cfg,
-            )
-
-            # Botão salvar
-            st.markdown("---")
-            c1, c2 = st.columns([1, 3])
-            with c1:
-                if st.button("💾 Salvar INSUMOS", use_container_width=True):
-                    try:
-                        n = _persist_insumo_batch(session, FQN_MAIN, df_missing, edited_insumo)
-                        if n == 0:
-                            st.info("Nenhuma alteração válida detectada (ou INSUMO ficou vazio).")
-                        else:
-                            st.success(f"INSUMO atualizado para {n} item(ns).")
-                            # força recarregar df pendente + telas
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Falha ao salvar INSUMO: {e}")
+if st.session_state.get("open_reprova"):
+    st.session_state.open_reprova = False
+    dlg_reprova(ids_sel_ok)
