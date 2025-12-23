@@ -459,8 +459,6 @@ edited = st.data_editor(
     column_config=col_cfg_all,
     column_order=list(df_view.columns),
 )
-
-st.caption("Itens selecionados sem INSUMO preenchido não entram em Aprovar/Rejeitar.")
 # ------------------------------
 # Seleção para Aprovar/Rejeitar (SEM exigir INSUMO)
 # ------------------------------
@@ -530,4 +528,5 @@ if st.session_state.get("open_aprova"):
 if st.session_state.get("open_reprova"):
     st.session_state.open_reprova = False
     dlg_reprova(ids_sel_ok)
+
 
