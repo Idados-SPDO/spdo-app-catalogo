@@ -461,26 +461,11 @@ edited = st.data_editor(
 )
 
 st.caption("Itens selecionados sem INSUMO preenchido não entram em Aprovar/Rejeitar.")
-
 # ------------------------------
-# Seleção para Aprovar/Rejeitar
+# Seleção para Aprovar/Rejeitar (SEM exigir INSUMO)
 # ------------------------------
 sel_mask = edited["Validar"] == True
-ids_sel_all = edited.loc[sel_mask, "ID"].tolist()
-
-def _filled_insumo(s: pd.Series) -> pd.Series:
-    return s.astype("string").fillna("").str.strip().ne("")
-
-if ids_sel_all:
-    sel_rows = edited[edited["ID"].isin(ids_sel_all)].copy()
-    ok_mask = _filled_insumo(sel_rows["INSUMO"]) if "INSUMO" in sel_rows.columns else pd.Series([True] * len(sel_rows), index=sel_rows.index)
-    ids_sel_ok = sel_rows.loc[ok_mask, "ID"].tolist()
-    ids_sel_bad = sel_rows.loc[~ok_mask, "ID"].tolist()
-else:
-    ids_sel_ok, ids_sel_bad = [], []
-
-if ids_sel_bad:
-    st.warning(f"{len(ids_sel_bad)} selecionado(s) sem INSUMO preenchido: não entrarão na ação.")
+ids_sel_ok = edited.loc[sel_mask, "ID"].tolist()
 
 colA, colB = st.columns([1, 1])
 with colA:
@@ -494,6 +479,7 @@ with colB:
         st.session_state.open_reprova = False
     if st.button("❌ Rejeitar selecionados", disabled=(len(ids_sel_ok) == 0)):
         st.session_state.open_reprova = True
+
 
 @st.dialog("Confirmar aprovação")
 def dlg_aprova(ids: list[int]):
@@ -544,3 +530,4 @@ if st.session_state.get("open_aprova"):
 if st.session_state.get("open_reprova"):
     st.session_state.open_reprova = False
     dlg_reprova(ids_sel_ok)
+
