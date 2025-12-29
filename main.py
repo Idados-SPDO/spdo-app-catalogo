@@ -24,46 +24,50 @@ LOGIN_PAGE = st.Page("pages/0_Login.py", title="🔐 Login")
 PAGE_META = {
     "home": {
         "page": st.Page("pages/1_Home.py", title="🏠 Início"),
-        "module": "Módulo 1",
+        "module": "Módulo - Visualização",
     },
     "catalogo": {
         "page": st.Page("pages/4_Catalogo.py", title="📚 Catálogo"),
-        "module": "Módulo 1",
+        "module": "Módulo - Visualização",
     },
     "cadastro": {
         "page": st.Page("pages/2_Cadastro.py", title="➕ Cadastro"),
-        "module": "Módulo 2",
+        "module": "Módulo - Operacional",
+    },
+    "criacao_insumo": {
+        "page": st.Page("pages/9_CriacaoInsumo.py", title="📦 Criação de Insumos"),
+        "module": "Módulo - Operacional",
     },
     "nao_aprovados": {
         "page": st.Page("pages/6_NaoAprovados.py", title="❌ Não Aprovados"),
-        "module": "Módulo 2",
+        "module": "Módulo - Operacional",
     },
     "validacao": {
         "page": st.Page("pages/3_Validacao.py", title="✅ Validação"),
-        "module": "Módulo 3",
+        "module": "Módulo - Operacional",
     },
     "atualizacao": {
         "page": st.Page("pages/5_Atualizacao.py", title="🛠️ Atualização"),
-        "module": "Módulo 3",
+        "module": "Módulo - Admin",
     },
     "exclusao": {
         "page": st.Page("pages/7_Exclusao.py", title="🗑️ Exclusão"),
-        "module": "Módulo 3",
+        "module": "Módulo - Admin",
     },
     "usuarios": {
         "page": st.Page("pages/8_Usuarios.py", title="👤 Usuários"),
-        "module": "Módulo 3",
+        "module": "Módulo - Admin",
     },
 }
 
 
 ROLE_MATRIX = {
     "USER":        ["home", "catalogo"],
-    "OPERACIONAL": ["home", "catalogo", "cadastro", "nao_aprovados"],
+    "OPERACIONAL": ["home", "catalogo", "cadastro", "criacao_insumo","nao_aprovados", "validacao"],
     "ADMIN":       list(PAGE_META.keys()),
 }
 
-MODULE_ORDER = ["Módulo 1", "Módulo 2", "Módulo 3"]
+MODULE_ORDER = ["Módulo - Visualização", "Módulo - Operacional", "Módulo - Admin"]
 
 def nav_for_role(role: str) -> dict:
     role = (role or "USER").upper().strip()

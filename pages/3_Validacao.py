@@ -428,7 +428,7 @@ def approve_correcoes(session, edited_df: pd.DataFrame, ids: list[int], user: di
 # Página
 # ==============================
 # Auth
-require_roles("ADMIN")
+require_roles("ADMIN", "OPERACIONAL")
 
 st.set_page_config(page_title="Catálogo • Validação", layout="wide")
 st.title("✅ Validação de Itens")
@@ -450,31 +450,39 @@ df_missing_base = df_all[
     df_all["INSUMO"].isna() | df_all["INSUMO"].astype("string").str.strip().eq("")
 ].copy()
 
+def user_has_role(u: dict, role: str) -> bool:
+    role = role.upper()
+    r = u.get("role") or u.get("roles") or u.get("perfil")
+    if isinstance(r, str):
+        return r.upper() == role
+    if isinstance(r, (list, tuple, set)):
+        return any(str(x).upper() == role for x in r)
+    return False
+
+is_admin = user_has_role(user, "ADMIN")
+
 if df_all.empty:
         st.info("Nenhum item cadastrado ainda.")
 else:
         user_map = load_user_display_map(session)
 
-        tab1, tab2 = st.tabs(["Validação", "Criação de Insumo"])
-        
-        with tab1:
-            st.subheader("Filtros")
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
+        st.subheader("Filtros")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
                 sel_user = st.selectbox(
                 "Usuário",
                 build_user_options(df_all, user_map),  # <- retorna só labels legíveis
                 index=0,
                 key="val_sel_user"
             )
-            with c2:
+        with c2:
                 f_insumo = st.text_input("Insumo", key="val_f_insumo")
-            with c3:
+        with c3:
                 f_codigo = st.text_input("Código do Produto", key="val_f_codigo")
-            with c4:
+        with c4:
                 f_palavra = st.text_input("Palavra-chave", key="val_f_palavra")
 
-            mask = apply_common_filters(
+        mask = apply_common_filters(
                 df_validacao_base,
                 sel_user_name=sel_user,   # <- passa o *nome de exibição* selecionado
                 f_insumo=f_insumo,
@@ -483,20 +491,21 @@ else:
                 user_map=user_map,
             )
 
-            df_view = df_validacao_base[mask].copy()
-            if df_view.empty:
+        df_view = df_validacao_base[mask].copy()
+        if df_view.empty:
                 st.info("Nenhum item com os filtros aplicados.")
                 ids_sel = []
-            else:
+        else:
                 # coluna de ação
                 st.caption(f"Itens para validação no banco: **{len(df_view)}**")
                 if "Validar" not in df_view.columns:
                     df_view.insert(0, "Validar", False)
                 left_sel, right_sel = st.columns([1, 3])
                 with left_sel:
-                    select_all_val = st.checkbox("Selecionar todos", key="val_select_all")
-                if select_all_val:
-                    df_view["Validar"] = True
+                    if is_admin:
+                        select_all_val = st.checkbox("Selecionar todos", key="val_select_all")
+                        if select_all_val:
+                            df_view["Validar"] = True
 
                 df_view = _recalc_sinonimo_df_inplace(df_view)
 
@@ -539,23 +548,24 @@ else:
                 ids_sel = edited.loc[sel_mask, "ID"].tolist()
 
 
+        if is_admin:
             st.markdown("---")
             colA, colB = st.columns([1, 1])
             with colA:
-                if "open_aprova" not in st.session_state:
-                    st.session_state.open_aprova = False
-                btn_aprova = st.button("✅ Aprovar selecionados", disabled=(len(ids_sel) == 0))
-                if btn_aprova:
-                    st.session_state.open_aprova = True
+                    if "open_aprova" not in st.session_state:
+                        st.session_state.open_aprova = False
+                    btn_aprova = st.button("✅ Aprovar selecionados", disabled=(len(ids_sel) == 0))
+                    if btn_aprova:
+                        st.session_state.open_aprova = True
             with colB:
-                if "open_reprova" not in st.session_state:
-                    st.session_state.open_reprova = False
-                btn_reprova = st.button("❌ Rejeitar selecionados", disabled=(len(ids_sel) == 0))
-                if btn_reprova:
-                    st.session_state.open_reprova = True
+                    if "open_reprova" not in st.session_state:
+                        st.session_state.open_reprova = False
+                    btn_reprova = st.button("❌ Rejeitar selecionados", disabled=(len(ids_sel) == 0))
+                    if btn_reprova:
+                        st.session_state.open_reprova = True
 
-            @st.dialog("Confirmar aprovação")
-            def dlg_aprova(ids):
+        @st.dialog("Confirmar aprovação")
+        def dlg_aprova(ids):
                 st.write(f"Você vai **APROVAR** {len(ids)} item(ns).")
                 obs = st.text_area("Observação (opcional)", key="dlg_obs_aprova")
                 try:
@@ -572,8 +582,8 @@ else:
                 with c2:
                     st.button("Cancelar", key="cancelA")
 
-            @st.dialog("Confirmar rejeição")
-            def dlg_reprova(ids):
+        @st.dialog("Confirmar rejeição")
+        def dlg_reprova(ids):
                 st.write(f"Você vai **REJEITAR** {len(ids)} item(ns).")
                 obs = st.text_area("Motivo/observação (opcional)", key="dlg_obs_reprova")
                 try:
@@ -590,68 +600,10 @@ else:
                 with c2:
                     st.button("Cancelar", key="cancelR")
 
-            if st.session_state.get("open_aprova"):
+        if st.session_state.get("open_aprova"):
                 st.session_state.open_aprova = False
                 dlg_aprova(ids_sel)
 
-            if st.session_state.get("open_reprova"):
+        if st.session_state.get("open_reprova"):
                 st.session_state.open_reprova = False
                 dlg_reprova(ids_sel)
-
-        with tab2:
-            st.subheader("Criação de Insumo (itens sem INSUMO)")
-
-            if "INSUMO" not in df_all.columns:
-                st.error("A coluna INSUMO não existe no dataframe carregado (listar_itens_df).")
-                st.stop()
-
-            # somente itens com INSUMO vazio/NULL
-            df_missing = df_all[df_all["INSUMO"].isna() | df_all["INSUMO"].astype("string").str.strip().eq("")].copy()
-
-            if df_missing.empty:
-                st.success("Nenhum item pendente de preenchimento de INSUMO.")
-                st.stop()
-
-            st.caption(f"Itens sem INSUMO: **{len(df_missing)}**")
-
-            # (opcional) escolhe colunas mais úteis para essa tela
-            wanted_cols = [
-                "ID", "CODIGO_PRODUTO", "ITEM", "DESCRICAO", "ESPECIFICACAO", "MARCA",
-                "QTD_MED", "UN_MED", "EMB_PRODUTO",
-                "INSUMO", "USUARIO_CADASTRO", "DATA_CADASTRO"
-            ]
-            cols_show = [c for c in wanted_cols if c in df_missing.columns]
-            df_missing = df_missing[cols_show]
-
-            # tabela: tudo travado exceto INSUMO
-            col_cfg = {}
-            for c in df_missing.columns:
-                if c == "INSUMO":
-                    col_cfg[c] = st.column_config.TextColumn(label="INSUMO", help="Preencha o INSUMO.", required=True)
-                else:
-                    col_cfg[c] = st.column_config.Column(disabled=True)
-
-            edited_insumo = st.data_editor(
-                df_missing,
-                num_rows="fixed",
-                hide_index=True,
-                use_container_width=True,
-                key="editor_criacao_insumo",
-                column_config=col_cfg,
-            )
-
-            # Botão salvar
-            st.markdown("---")
-            c1, c2 = st.columns([1, 3])
-            with c1:
-                if st.button("💾 Salvar INSUMOS", use_container_width=True):
-                    try:
-                        n = _persist_insumo_batch(session, FQN_MAIN, df_missing, edited_insumo)
-                        if n == 0:
-                            st.info("Nenhuma alteração válida detectada (ou INSUMO ficou vazio).")
-                        else:
-                            st.success(f"INSUMO atualizado para {n} item(ns).")
-                            # força recarregar df pendente + telas
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Falha ao salvar INSUMO: {e}")
