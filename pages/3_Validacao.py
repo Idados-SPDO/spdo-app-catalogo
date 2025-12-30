@@ -175,54 +175,6 @@ def _persist_sinonimo_batch(session, table_fqn: str, df_ids: pd.DataFrame, id_co
     """
     session.sql(sql).collect()
 
-
-def _persist_insumo_batch(session, table_fqn: str, df_before: pd.DataFrame, df_after: pd.DataFrame):
-    """
-    Atualiza INSUMO em lote (somente IDs que mudaram e INSUMO não vazio).
-    Atualiza também DATA_ATUALIZACAO / USUARIO_ATUALIZACAO se existirem na tabela.
-    """
-    if df_after.empty or "ID" not in df_after.columns or "INSUMO" not in df_after.columns:
-        return 0
-
-    # normaliza para comparar
-    b = df_before[["ID", "INSUMO"]].copy()
-    a = df_after[["ID", "INSUMO"]].copy()
-    b["INSUMO"] = b["INSUMO"].astype("string").fillna("").str.strip()
-    a["INSUMO"] = a["INSUMO"].astype("string").fillna("").str.strip()
-
-    merged = a.merge(b, on="ID", suffixes=("", "_OLD"))
-
-    changed = merged.loc[
-        (merged["INSUMO"] != merged["INSUMO_OLD"]) & (merged["INSUMO"] != "")
-    , ["ID", "INSUMO"]].copy()
-
-    if changed.empty:
-        return 0
-
-    # schema para metadados opcionais
-    cols_tbl = {c.name.upper() for c in session.table(table_fqn).schema}
-
-    ids = [int(x) for x in changed["ID"].tolist()]
-    ids_csv = ", ".join(str(i) for i in ids)
-
-    when_ins = " ".join([f"WHEN {int(r.ID)} THEN {_sql_escape(r.INSUMO)}" for r in changed.itertuples(index=False)])
-
-    sets = [f"INSUMO = CASE ID {when_ins} END"]
-
-    if "DATA_ATUALIZACAO" in cols_tbl:
-        sets.append("DATA_ATUALIZACAO = CURRENT_TIMESTAMP()")
-    if "USUARIO_ATUALIZACAO" in cols_tbl:
-        u = current_user()
-        sets.append(f"USUARIO_ATUALIZACAO = {sql_str(u.get('name') or u.get('username'))}")
-
-    sql = f"""
-        UPDATE {table_fqn}
-        SET {", ".join(sets)}
-        WHERE ID IN ({ids_csv})
-    """
-    session.sql(sql).collect()
-    return len(ids)
-
 # ==============================
 # Ações de Banco
 # ==============================
@@ -441,14 +393,14 @@ session.sql("ALTER SESSION SET TIMEZONE = 'America/Sao_Paulo'").collect()
 
 df_all = listar_itens_df(session)
 
-df_validacao_base = df_all[
-    df_all["INSUMO"].notna() & df_all["INSUMO"].astype("string").str.strip().ne("")
-].copy()
+#df_validacao_base = df_all[
+#    df_all["INSUMO"].notna() & df_all["INSUMO"].astype("string").str.strip().ne("")
+#].copy()
 
 # sem INSUMO (para Aba 2)
-df_missing_base = df_all[
-    df_all["INSUMO"].isna() | df_all["INSUMO"].astype("string").str.strip().eq("")
-].copy()
+#df_missing_base = df_all[
+#    df_all["INSUMO"].isna() | df_all["INSUMO"].astype("string").str.strip().eq("")
+#].copy()
 
 def user_has_role(u: dict, role: str) -> bool:
     role = role.upper()
@@ -483,7 +435,7 @@ else:
                 f_palavra = st.text_input("Palavra-chave", key="val_f_palavra")
 
         mask = apply_common_filters(
-                df_validacao_base,
+                df_all,
                 sel_user_name=sel_user,   # <- passa o *nome de exibição* selecionado
                 f_insumo=f_insumo,
                 f_codigo=f_codigo,
@@ -491,7 +443,7 @@ else:
                 user_map=user_map,
             )
 
-        df_view = df_validacao_base[mask].copy()
+        df_view = df_all[mask].copy()
         if df_view.empty:
                 st.info("Nenhum item com os filtros aplicados.")
                 ids_sel = []
@@ -569,7 +521,7 @@ else:
                 st.write(f"Você vai **APROVAR** {len(ids)} item(ns).")
                 obs = st.text_area("Observação (opcional)", key="dlg_obs_aprova")
                 try:
-                    sel_df = df_validacao_base[df_validacao_base["ID"].isin(ids)].copy()
+                    sel_df = df_all[df_all["ID"].isin(ids)].copy()
                     sel_df = _recalc_sinonimo_df_inplace(sel_df)
                     _persist_sinonimo_batch(session, FQN_MAIN, sel_df[["ID","DESCRICAO","SINONIMO"]])
                 except Exception as e:
@@ -577,7 +529,7 @@ else:
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("Confirmar ✅", type="primary"):
-                        apply_decision(session, df_validacao_base, user, ids, "APROVADO", obs)
+                        apply_decision(session, df_all, user, ids, "APROVADO", obs)
                         st.rerun()
                 with c2:
                     st.button("Cancelar", key="cancelA")
@@ -587,7 +539,7 @@ else:
                 st.write(f"Você vai **REJEITAR** {len(ids)} item(ns).")
                 obs = st.text_area("Motivo/observação (opcional)", key="dlg_obs_reprova")
                 try:
-                    sel_df = df_validacao_base[df_validacao_base["ID"].isin(ids)].copy()
+                    sel_df = df_all[df_all["ID"].isin(ids)].copy()
                     sel_df = _recalc_sinonimo_df_inplace(sel_df)
                     _persist_sinonimo_batch(session, FQN_MAIN, sel_df[["ID","DESCRICAO","SINONIMO"]])
                 except Exception as e:
@@ -595,7 +547,7 @@ else:
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("Confirmar ❌", type="primary"):
-                        apply_decision(session, df_validacao_base, user, ids, "REJEITADO", obs)
+                        apply_decision(session, df_all, user, ids, "REJEITADO", obs)
                         st.rerun()
                 with c2:
                     st.button("Cancelar", key="cancelR")

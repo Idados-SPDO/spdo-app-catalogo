@@ -3,9 +3,9 @@ import pandas as pd
 from io import BytesIO
 from datetime import datetime
 
-from src.db_snowflake import get_session, listar_itens_df
+from src.db_snowflake import get_session
 from src.auth import require_roles, current_user
-from src.variables import FQN_MAIN
+from src.variables import FQN_APR
 
 
 # ==============================
@@ -57,7 +57,7 @@ def _persist_insumo_batch(session, table_fqn: str, df_before: pd.DataFrame, df_a
     if changed.empty:
         return 0
 
-    cols_tbl = {c.name.upper() for c in session.table(table_fqn).schema}
+    cols_tbl = {c.name.upper() for c in session.sql(f"SELECT * FROM {table_fqn} LIMIT 0").schema}
 
     ids = [int(x) for x in changed["ID"].tolist()]
     ids_csv = ", ".join(str(i) for i in ids)
@@ -83,10 +83,31 @@ def _persist_insumo_batch(session, table_fqn: str, df_before: pd.DataFrame, df_a
     return len(ids)
 
 
+def load_df_from_fqn(session, table_fqn: str, wanted_cols: list[str] | None = None) -> pd.DataFrame:
+    """
+    Carrega dados diretamente de um FQN (tabela/view) no Snowflake.
+    Se wanted_cols for informado, seleciona apenas as colunas que existirem.
+    """
+    # Descobre colunas existentes sem puxar dados
+    sp0 = session.sql(f"SELECT * FROM {table_fqn} LIMIT 0")
+    existing = [c.name for c in sp0.schema]  # nomes já vêm no case do Snowflake (geralmente UPPER)
+
+    if wanted_cols:
+        cols = [c for c in wanted_cols if c in existing]
+        if not cols:
+            # fallback: pega tudo
+            return session.sql(f"SELECT * FROM {table_fqn}").to_pandas()
+
+        select_list = ", ".join([f'"{c}"' for c in cols])  # quote seguro
+        return session.sql(f"SELECT {select_list} FROM {table_fqn}").to_pandas()
+
+    return session.sql(f"SELECT * FROM {table_fqn}").to_pandas()
+
+
 # ==============================
 # Página
 # ==============================
-require_roles("ADMIN")
+require_roles("ADMIN","OPERACIONAL")
 
 st.set_page_config(page_title="Catálogo • Criação de Insumo", layout="wide")
 st.title("📦 Criação de Insumo")
@@ -94,7 +115,11 @@ st.title("📦 Criação de Insumo")
 session = get_session()
 session.sql("ALTER SESSION SET TIMEZONE = 'America/Sao_Paulo'").collect()
 
-df_all = listar_itens_df(session)
+BASE_COLS = [
+    "ID", "CODIGO_PRODUTO", "INSUMO"
+]
+df_all = load_df_from_fqn(session, FQN_APR, wanted_cols=BASE_COLS)
+
 if df_all.empty:
     st.info("Nenhum item cadastrado ainda.")
     st.stop()
@@ -154,7 +179,7 @@ with tab1:
     st.markdown("---")
     if st.button("💾 Salvar INSUMOS", use_container_width=True):
         try:
-            n = _persist_insumo_batch(session, FQN_MAIN, df_missing, edited_insumo)
+            n = _persist_insumo_batch(session, FQN_APR, df_missing, edited_insumo)
             if n == 0:
                 st.info("Nenhuma alteração válida detectada (ou INSUMO ficou vazio).")
             else:
@@ -164,7 +189,7 @@ with tab1:
             st.error(f"Falha ao salvar INSUMO: {e}")
 
 with tab2:
-    st.subheader("📥 Exportar itens sem INSUMO")
+    st.subheader("📥 Exportar itens sem insumo")
 
     export_cols = [
         "ID", "CODIGO_PRODUTO", "ITEM", "DESCRICAO", "ESPECIFICACAO", "MARCA",
@@ -183,15 +208,6 @@ with tab2:
     c_dl1, c_dl2 = st.columns(2)
 
     with c_dl1:
-        st.download_button(
-            label="⬇️ Baixar CSV (template)",
-            data=df_to_csv_bytes(df_export),
-            file_name=f"{file_base}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    with c_dl2:
         try:
             st.download_button(
                 label="⬇️ Baixar Excel (template)",
@@ -209,7 +225,7 @@ with tab2:
     st.subheader("📤 Importar planilha preenchida")
 
     up = st.file_uploader(
-        "Faça upload do CSV/Excel preenchido (colunas obrigatórias: INSUMO e ID ou CODIGO_PRODUTO).",
+        "Faça upload do Excel preenchido (colunas obrigatórias: INSUMO, ID e CODIGO_PRODUTO).",
         type=["csv", "xlsx"],
         key="uploader_insumo",
     )
@@ -298,7 +314,7 @@ with tab2:
 
             st.markdown("### Aplicar importação")
             if st.button("🚀 Aplicar INSUMOS do upload no Catálogo", use_container_width=True, disabled=(len(df_up_in) == 0)):
-                n = _persist_insumo_batch(session, FQN_MAIN, df_before_apply, df_after_apply)
+                n = _persist_insumo_batch(session, FQN_APR, df_before_apply, df_after_apply)
                 if n == 0:
                     st.info("Nenhuma alteração foi aplicada (nenhum INSUMO mudou ou estavam vazios).")
                 else:
