@@ -34,13 +34,17 @@ PAGE_META = {
         "page": st.Page("pages/2_Cadastro.py", title="➕ Cadastro"),
         "module": "Módulo - Operacional",
     },
+    "criacao_insumo": {
+        "page": st.Page("pages/9_CriacaoInsumo.py", title="📦 Criação de Insumos"),
+        "module": "Módulo - Operacional",
+    },
     "nao_aprovados": {
         "page": st.Page("pages/6_NaoAprovados.py", title="❌ Não Aprovados"),
         "module": "Módulo - Operacional",
     },
     "validacao": {
         "page": st.Page("pages/3_Validacao.py", title="✅ Validação"),
-        "module": "Módulo - Admin",
+        "module": "Módulo - Operacional",
     },
     "atualizacao": {
         "page": st.Page("pages/5_Atualizacao.py", title="🛠️ Atualização"),
@@ -59,7 +63,7 @@ PAGE_META = {
 
 ROLE_MATRIX = {
     "USER":        ["home", "catalogo"],
-    "OPERACIONAL": ["home", "catalogo", "cadastro", "nao_aprovados"],
+    "OPERACIONAL": ["home", "catalogo", "cadastro", "criacao_insumo","nao_aprovados", "validacao"],
     "ADMIN":       list(PAGE_META.keys()),
 }
 
