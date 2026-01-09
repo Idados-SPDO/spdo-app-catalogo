@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from snowflake.snowpark import functions as F
-
+import uuid
 from src.auth import require_roles, current_user
 from src.db_snowflake import (
     get_session,
@@ -49,17 +49,20 @@ if df.empty:
     st.warning("Nenhum usuário encontrado.")
     st.stop()
 
+########
 df_original = df.copy()
+df_original = df_original.set_index("USERNAME", drop=False)
 
 st.subheader("Usuários")
 
-# Adiciona coluna de exclusão (somente UI)
-df_ui = df.copy()
+# DataFrame para UI (index = USERNAME original)
+df_ui = df.copy().set_index("USERNAME", drop=False)
 df_ui.insert(0, "EXCLUIR", False)
+#########
 
 cfg = {
     "EXCLUIR": st.column_config.CheckboxColumn("Excluir?", default=False),
-    "USERNAME": st.column_config.TextColumn("Usuário", disabled=True),
+    "USERNAME": st.column_config.TextColumn("Usuário", disabled=False),
     "ROLE": st.column_config.SelectboxColumn("Permissão", options=ROLES_VALIDAS, required=True),
 }
 if "NAME" in df_ui.columns:
@@ -74,12 +77,22 @@ edited = st.data_editor(
 )
 
 # Lista de exclusão
+# Para excluir no banco, use o USERNAME original (index)
 to_delete = (
+    edited.loc[edited["EXCLUIR"] == True]
+    .index
+    .astype(str)
+    .tolist()
+)
+
+# Apenas para exibir na tela, pode mostrar o valor atual editado (coluna USERNAME)
+to_delete_display = (
     edited.loc[edited["EXCLUIR"] == True, "USERNAME"]
     .dropna()
     .astype(str)
     .tolist()
 )
+
 
 # DataFrame para update (remove a coluna EXCLUIR)
 edited_upd = edited.drop(columns=["EXCLUIR"], errors="ignore")
@@ -89,50 +102,136 @@ cA, cB = st.columns([1, 2])
 
 with cA:
     if st.button("Salvar alterações", use_container_width=True):
+        edited_upd = edited.drop(columns=["EXCLUIR"], errors="ignore").copy()
+
+        # Normalizações básicas
+        if "USERNAME" in edited_upd.columns:
+            edited_upd["USERNAME"] = edited_upd["USERNAME"].astype("string").fillna("").str.strip()
+
+        # Valida ROLE
         bad = edited_upd.loc[~edited_upd["ROLE"].isin(ROLES_VALIDAS)]
         if not bad.empty:
             st.error("Há usuários com ROLE inválida. Use: USER, OPERACIONAL ou ADMIN.")
             st.stop()
 
-        key = "USERNAME"
-        compare_cols = [c for c in ["ROLE", "NAME"] if c in edited_upd.columns]
+        # Valida USERNAME vazio
+        if "USERNAME" in edited_upd.columns:
+            empty_u = edited_upd["USERNAME"].astype("string").fillna("").str.strip().eq("")
+            if empty_u.any():
+                st.error("Há usuários com USERNAME vazio. Preencha o campo Usuário.")
+                st.stop()
 
-        merged = edited_upd.merge(
-            df_original_upd[[key] + compare_cols],
-            on=key,
-            how="left",
-            suffixes=("", "_OLD"),
-        )
+            # Valida duplicidade dentro do editor (case-insensitive)
+            u_lower = edited_upd["USERNAME"].astype("string").str.lower()
+            if u_lower.duplicated().any():
+                st.error("Há USERNAMEs duplicados na edição. Garanta que cada usuário seja único.")
+                st.stop()
+
+        # Alinha original pelo index (USERNAME antigo)
+        orig = df_original.loc[edited_upd.index].copy()
+
+        compare_cols = [c for c in ["USERNAME", "ROLE", "NAME"] if c in edited_upd.columns and c in orig.columns]
 
         changed_mask = False
         for c in compare_cols:
-            changed_mask = changed_mask | (merged[c].astype("string") != merged[f"{c}_OLD"].astype("string"))
+            changed_mask = changed_mask | (edited_upd[c].astype("string") != orig[c].astype("string"))
 
-        changed = merged.loc[changed_mask, [key] + compare_cols].copy()
-
+        changed = edited_upd.loc[changed_mask, compare_cols].copy()
         if changed.empty:
             st.info("Nenhuma alteração detectada.")
             st.stop()
 
+        # USERNAME antigo vem do index
+        changed["OLD_USERNAME"] = changed.index.astype("string")
+        changed["NEW_USERNAME"] = changed["USERNAME"].astype("string").fillna("").str.strip()
+
+
+        # Checagem de colisão com usernames existentes no banco (fora do batch atual)
         try:
+            existing_all = {str(u).strip().lower() for u in users_list_usernames(session)}
+        except Exception:
+            existing_all = set()
+
+        batch_old = {str(u).strip().lower() for u in df_original.index.tolist()}  # todos os que estão na tela
+
+        ren = changed.loc[
+            changed["NEW_USERNAME"].astype("string").str.lower()
+            != changed["OLD_USERNAME"].astype("string").str.lower()
+        ].copy()
+
+        # Se renomear para algo que já existe no banco e NÃO é alguém do batch atual, bloqueia
+        collisions = []
+        for _, r in ren.iterrows():
+            new_l = str(r["NEW_USERNAME"]).strip().lower()
+            if new_l in existing_all and new_l not in batch_old:
+                collisions.append(str(r["NEW_USERNAME"]).strip())
+
+        if collisions:
+            st.error(
+                "Não foi possível renomear: alguns USERNAMEs já existem no banco: "
+                + ", ".join(sorted(set(collisions)))
+            )
+            st.stop()
+
+        # Aplicação em transação + rename em duas fases (evita troca/colisão)
+        tmp_map = {}
+        run_tag = uuid.uuid4().hex[:8]
+
+        try:
+            session.sql("BEGIN").collect()
+
+            # 1) Se houver renomes, primeiro move para nomes temporários
+            if not ren.empty:
+                # iterrows é mais seguro aqui (não depende de nomes de atributos)
+                for i, (_, row) in enumerate(ren.iterrows()):
+                    old_u = str(row["OLD_USERNAME"])
+                    tmp_u = f"TMP_{run_tag}_{i}"
+                    tmp_map[old_u] = tmp_u
+
+                    session.sql(
+                        f"UPDATE {FQN_USERS} "
+                        f"SET USERNAME = '{_esc(tmp_u)}' "
+                        f"WHERE USERNAME = '{_esc(old_u)}'"
+                    ).collect()
+
+            # 2) Agora aplica updates finais (USERNAME + ROLE/NAME)
             for _, r in changed.iterrows():
+                old_u = str(r["OLD_USERNAME"])
+                where_u = tmp_map.get(old_u, old_u)
+
                 sets = []
+
+                # USERNAME (sempre setar, mesmo que não tenha mudado)
+                if "USERNAME" in compare_cols:
+                    sets.append(f"USERNAME = '{_esc(str(r['USERNAME']).strip())}'")
+
                 if "ROLE" in compare_cols:
                     sets.append(f"ROLE = '{_esc(str(r['ROLE']))}'")
+
                 if "NAME" in compare_cols:
-                    if pd.isna(r.get("NAME")):
+                    if pd.isna(r.get("NAME")) or str(r.get("NAME")).strip() == "":
                         sets.append("NAME = NULL")
                     else:
                         sets.append(f"NAME = '{_esc(str(r.get('NAME')))}'")
 
                 set_sql = ", ".join(sets)
+
                 session.sql(
-                    f"UPDATE {FQN_USERS} SET {set_sql} WHERE USERNAME = '{_esc(str(r['USERNAME']))}'"
+                    f"UPDATE {FQN_USERS} "
+                    f"SET {set_sql} "
+                    f"WHERE USERNAME = '{_esc(where_u)}'"
                 ).collect()
+
+            session.sql("COMMIT").collect()
 
             st.success(f"Alterações aplicadas: {len(changed)} usuário(s).")
             st.rerun()
+
         except Exception as e:
+            try:
+                session.sql("ROLLBACK").collect()
+            except Exception:
+                pass
             st.error(f"Falha ao salvar alterações: {e}")
             st.stop()
 
@@ -144,7 +243,7 @@ if not to_delete:
     st.info("Marque usuários na coluna **Excluir?** para habilitar a exclusão.")
 else:
     st.warning(f"Usuários marcados para exclusão: **{len(to_delete)}**", icon="⚠️")
-    st.write(", ".join(to_delete))
+    st.write(", ".join(to_delete_display))
 
 confirm = st.text_input("Digite EXCLUIR para confirmar", placeholder="EXCLUIR", key="confirm_delete_users")
 
