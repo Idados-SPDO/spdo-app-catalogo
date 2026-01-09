@@ -29,8 +29,6 @@ EDITABLE_COR_COLS = [
     "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL"
     ,"SINONIMO","PALAVRA_CHAVE","REFERENCIA"
 ]
-st.subheader("Itens para correção")
-
 
 def reorder(df: pd.DataFrame, wanted: list[str], prepend: list[str] | None = None) -> pd.DataFrame:
     prepend = prepend or []
@@ -175,6 +173,49 @@ def _persist_sinonimo_batch(session, table_fqn: str, df_ids: pd.DataFrame, id_co
     session.sql(sql).collect()
 
 
+##### Filtros
+ALL_LABEL = "Todos"
+NULL_LABEL = "(vazio)"
+def norm_str_series(s: pd.Series, *, drop_dot_zero: bool = False) -> pd.Series:
+    """
+    Normaliza valores para filtros:
+    - converte para string
+    - remove .0 no final (útil p/ EAN vindo como float)
+    - strip
+    - vazio -> NA
+    """
+    s = s.astype("string")
+    if drop_dot_zero:
+        s = s.str.replace(r"\.0$", "", regex=True)
+    s = s.str.strip()
+    s = s.replace(["", "nan", "NaN", "None"], pd.NA)
+    return s
+
+def dropdown_options(s_norm: pd.Series, *, all_label: str = ALL_LABEL, null_label: str = NULL_LABEL) -> list[str]:
+    opts = [all_label]
+    if s_norm.isna().any():
+        opts.append(null_label)
+
+    uniq = pd.Series(pd.unique(s_norm.dropna())).astype("string")
+    uniq = uniq[uniq.str.len() > 0].sort_values()
+    opts.extend(uniq.tolist())
+    return opts
+
+def apply_dropdown_to_mask(
+    mask: pd.Series,
+    s_norm: pd.Series,
+    selected: str,
+    *,
+    all_label: str = ALL_LABEL,
+    null_label: str = NULL_LABEL
+) -> pd.Series:
+    if selected == all_label:
+        return mask
+    if selected == null_label:
+        return mask & s_norm.isna()
+    return mask & (s_norm == selected)
+
+
 def resend_to_validacao(session, edited_df: pd.DataFrame, ids: list[int], user: dict):
     """
     Atualiza campos editáveis em FQN_COR, move de FQN_COR -> FQN_MAIN (fila de validação),
@@ -259,10 +300,7 @@ def resend_to_validacao(session, edited_df: pd.DataFrame, ids: list[int], user: 
         session.sql("ROLLBACK").collect()
         st.error(f"Falha ao reenviar para validação: {e}")
 
-try:
-        cnt = session.sql(f"SELECT COUNT(*) AS N FROM {FQN_COR}").collect()[0]["N"]
-        st.caption(f"Total reprovados no banco: **{cnt}**")
-        
+try:        
         df_cor = session.sql(f"""
             SELECT * EXCLUDE (DATA_ATUALIZACAO, USUARIO_ATUALIZACAO)
             FROM {FQN_COR}
@@ -280,26 +318,91 @@ else:
         user_map = load_user_display_map(session)
 
         st.subheader("Filtros")
+        ######
+        s_insumo = norm_str_series(df_cor["INSUMO"]) if "INSUMO" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
+        s_codigo = norm_str_series(df_cor["CODIGO_PRODUTO"], drop_dot_zero=True) if "CODIGO_PRODUTO" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
+
+        s_grupo = norm_str_series(df_cor["GRUPO"]) if "GRUPO" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
+        s_categoria = norm_str_series(df_cor["CATEGORIA"]) if "CATEGORIA" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
+        s_segmento = norm_str_series(df_cor["SEGMENTO"]) if "SEGMENTO" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
+        s_familia = norm_str_series(df_cor["FAMILIA"]) if "FAMILIA" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
+        s_subfamilia = norm_str_series(df_cor["SUBFAMILIA"]) if "SUBFAMILIA" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
+
+        # Opções
+        opt_insumo = dropdown_options(s_insumo)
+        opt_codigo = dropdown_options(s_codigo)
+
+        opt_grupo = dropdown_options(s_grupo)
+        opt_categoria = dropdown_options(s_categoria)
+        opt_segmento = dropdown_options(s_segmento)
+        opt_familia = dropdown_options(s_familia)
+        opt_subfamilia = dropdown_options(s_subfamilia)
+
+        # Linha 1 (4 colunas)
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            sel_user = st.selectbox("Usuário", build_user_options(df_cor, user_map), index=0, key="cor_sel_user")
+            sel_user = st.selectbox(
+                "Usuário (cadastro)",
+                build_user_options(df_cor, user_map),
+                index=0,
+                key="cat_sel_user"
+            )
         with c2:
-            f_insumo = st.text_input("Insumo", key="cor_f_insumo")
+            sel_insumo = st.selectbox(
+                "Insumo",
+                opt_insumo,
+                index=0,
+                key="cat_sel_insumo_dd"
+            )
         with c3:
-            f_codigo = st.text_input("Código do Produto", key="cor_f_codigo")
+            sel_codigo = st.selectbox(
+                "Código do Produto (exato)",
+                opt_codigo,
+                index=0,
+                key="cat_sel_codigo_dd"
+            )
         with c4:
-            f_palavra = st.text_input("Palavra-chave", key="cor_f_palavra")
+            f_palavra = st.text_input("Palavra-chave (contém)", key="cat_f_palavra")
 
-        mask_cor = apply_common_filters(
+        # Linha 2 (4 colunas)
+        d1, d2, d3, d4 = st.columns(4)
+        with d1:
+            sel_grupo = st.selectbox("Grupo", opt_grupo, index=0, key="cat_sel_grupo_dd")
+        with d2:
+            sel_categoria = st.selectbox("Categoria", opt_categoria, index=0, key="cat_sel_categoria_dd")
+        with d3:
+            sel_segmento = st.selectbox("Segmento", opt_segmento, index=0, key="cat_sel_segmento_dd")
+        with d4:
+            sel_familia = st.selectbox("Família", opt_familia, index=0, key="cat_sel_familia_dd")
+
+        # Linha 3 (Subfamília)
+        e1, e2, e3, e4 = st.columns(4)
+        with e1:
+            sel_subfamilia = st.selectbox("Subfamília", opt_subfamilia, index=0, key="cat_sel_subfamilia_dd")
+
+        mask = apply_common_filters(
             df_cor,
             sel_user_name=sel_user,
-            f_insumo=f_insumo,
-            f_codigo=f_codigo,
-            f_palavra=f_palavra,
+            f_insumo="",  
+            f_codigo="",   
+            f_palavra=f_palavra,  # mantém
             user_map=user_map,
         )
 
-        df_cor_view = df_cor[mask_cor].copy()
+        # Aplica filtros dropdown (exatos)
+        mask = apply_dropdown_to_mask(mask, s_insumo, sel_insumo)
+        mask = apply_dropdown_to_mask(mask, s_codigo, sel_codigo)
+
+        mask = apply_dropdown_to_mask(mask, s_grupo, sel_grupo)
+        mask = apply_dropdown_to_mask(mask, s_categoria, sel_categoria)
+        mask = apply_dropdown_to_mask(mask, s_segmento, sel_segmento)
+        mask = apply_dropdown_to_mask(mask, s_familia, sel_familia)
+        mask = apply_dropdown_to_mask(mask, s_subfamilia, sel_subfamilia)
+
+        
+        #####
+
+        df_cor_view = df_cor[mask].copy()
 
 
 
@@ -308,12 +411,18 @@ else:
         else:
             if "Selecionar" not in df_cor_view.columns:
                 df_cor_view.insert(0, "Selecionar", False)
+                
+            cnt = session.sql(f"SELECT COUNT(*) AS N FROM {FQN_COR}").collect()[0]["N"]
+            st.caption(f"Total reprovados no banco: **{cnt}**")
             
             left_sel_cor, right_sel_cor = st.columns([1, 3])
             with left_sel_cor:
                 select_all_cor = st.checkbox("Selecionar todos", key="cor_select_all")
             if select_all_cor:
                 df_cor_view["Selecionar"] = True
+            
+            if st.button("Recarregar tabela"):
+                st.rerun()
 
             df_cor_view = _recalc_sinonimo_df_inplace(df_cor_view)
             # (Opcional) persistir já em COR para refletir na base

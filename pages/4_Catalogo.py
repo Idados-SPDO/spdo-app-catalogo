@@ -235,8 +235,8 @@ with e1:
 mask = apply_common_filters(
     df,
     sel_user_name=sel_user,
-    f_insumo="",          # não usa mais
-    f_codigo="",          # não usa mais
+    f_insumo="",  
+    f_codigo="",   
     f_palavra=f_palavra,  # mantém
     user_map=user_map,
 )
@@ -255,6 +255,8 @@ df_filtrado = df[mask].copy()
 
 # ===== Tabela =====
 st.caption(f"Itens no catalogo: **{len(df_filtrado)}**")
+if st.button("Recarregar tabela"):
+    st.rerun()
 
 if is_user_role:
     df_display = build_user_view(df_filtrado).reset_index(drop=True)

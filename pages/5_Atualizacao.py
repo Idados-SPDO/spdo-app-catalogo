@@ -207,6 +207,9 @@ lock_cols = [
 disabled_cols = [c for c in lock_cols if c in df_view.columns]
 st.caption(f"Itens para validar no banco: **{len(df_view)}**")
 
+if st.button("Recarregar tabela"):
+    st.rerun()
+     
 edited = st.data_editor(
     df_view,
     num_rows="fixed",
