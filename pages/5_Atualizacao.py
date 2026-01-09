@@ -26,27 +26,131 @@ if df.empty:
     st.stop()
 
 # -------- Filtros --------
+ALL_LABEL = "Todos"
+NULL_LABEL = "(vazio)"
+def norm_str_series(s: pd.Series, *, drop_dot_zero: bool = False) -> pd.Series:
+    """
+    Normaliza valores para filtros:
+    - converte para string
+    - remove .0 no final (útil p/ EAN vindo como float)
+    - strip
+    - vazio -> NA
+    """
+    s = s.astype("string")
+    if drop_dot_zero:
+        s = s.str.replace(r"\.0$", "", regex=True)
+    s = s.str.strip()
+    s = s.replace(["", "nan", "NaN", "None"], pd.NA)
+    return s
+
+def dropdown_options(s_norm: pd.Series, *, all_label: str = ALL_LABEL, null_label: str = NULL_LABEL) -> list[str]:
+    opts = [all_label]
+    if s_norm.isna().any():
+        opts.append(null_label)
+
+    uniq = pd.Series(pd.unique(s_norm.dropna())).astype("string")
+    uniq = uniq[uniq.str.len() > 0].sort_values()
+    opts.extend(uniq.tolist())
+    return opts
+
+def apply_dropdown_to_mask(
+    mask: pd.Series,
+    s_norm: pd.Series,
+    selected: str,
+    *,
+    all_label: str = ALL_LABEL,
+    null_label: str = NULL_LABEL
+) -> pd.Series:
+    if selected == all_label:
+        return mask
+    if selected == null_label:
+        return mask & s_norm.isna()
+    return mask & (s_norm == selected)
+
 user_map = load_user_display_map(session)
 
 st.subheader("Filtros")
+
+# Séries normalizadas (para opções e comparação)
+s_insumo = norm_str_series(df["INSUMO"]) if "INSUMO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
+s_codigo = norm_str_series(df["CODIGO_PRODUTO"], drop_dot_zero=True) if "CODIGO_PRODUTO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
+
+s_grupo = norm_str_series(df["GRUPO"]) if "GRUPO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
+s_categoria = norm_str_series(df["CATEGORIA"]) if "CATEGORIA" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
+s_segmento = norm_str_series(df["SEGMENTO"]) if "SEGMENTO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
+s_familia = norm_str_series(df["FAMILIA"]) if "FAMILIA" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
+s_subfamilia = norm_str_series(df["SUBFAMILIA"]) if "SUBFAMILIA" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
+
+# Opções
+opt_insumo = dropdown_options(s_insumo)
+opt_codigo = dropdown_options(s_codigo)
+
+opt_grupo = dropdown_options(s_grupo)
+opt_categoria = dropdown_options(s_categoria)
+opt_segmento = dropdown_options(s_segmento)
+opt_familia = dropdown_options(s_familia)
+opt_subfamilia = dropdown_options(s_subfamilia)
+
+# Linha 1 (4 colunas)
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    sel_user = st.selectbox("Usuário", build_user_options(df, user_map), index=0, key="atu_sel_user")
+    sel_user = st.selectbox(
+        "Usuário (cadastro)",
+        build_user_options(df, user_map),
+        index=0,
+        key="cat_sel_user"
+    )
 with c2:
-    f_insumo = st.text_input("Insumo", key="atu_f_insumo")
+    sel_insumo = st.selectbox(
+        "Insumo",
+        opt_insumo,
+        index=0,
+        key="cat_sel_insumo_dd"
+    )
 with c3:
-    f_codigo = st.text_input("Código do Produto", key="atu_f_codigo")
+    sel_codigo = st.selectbox(
+        "Código do Produto (exato)",
+        opt_codigo,
+        index=0,
+        key="cat_sel_codigo_dd"
+    )
 with c4:
-    f_palavra = st.text_input("Palavra-chave", key="atu_f_palavra")
+    f_palavra = st.text_input("Palavra-chave (contém)", key="cat_f_palavra")
+
+# Linha 2 (4 colunas)
+d1, d2, d3, d4 = st.columns(4)
+with d1:
+    sel_grupo = st.selectbox("Grupo", opt_grupo, index=0, key="cat_sel_grupo_dd")
+with d2:
+    sel_categoria = st.selectbox("Categoria", opt_categoria, index=0, key="cat_sel_categoria_dd")
+with d3:
+    sel_segmento = st.selectbox("Segmento", opt_segmento, index=0, key="cat_sel_segmento_dd")
+with d4:
+    sel_familia = st.selectbox("Família", opt_familia, index=0, key="cat_sel_familia_dd")
+
+# Linha 3 (Subfamília)
+e1, e2, e3, e4 = st.columns(4)
+with e1:
+    sel_subfamilia = st.selectbox("Subfamília", opt_subfamilia, index=0, key="cat_sel_subfamilia_dd")
 
 mask = apply_common_filters(
     df,
     sel_user_name=sel_user,
-    f_insumo=f_insumo,
-    f_codigo=f_codigo,
-    f_palavra=f_palavra,
+    f_insumo="",  
+    f_codigo="",   
+    f_palavra=f_palavra,  # mantém
     user_map=user_map,
 )
+
+# Aplica filtros dropdown (exatos)
+mask = apply_dropdown_to_mask(mask, s_insumo, sel_insumo)
+mask = apply_dropdown_to_mask(mask, s_codigo, sel_codigo)
+
+mask = apply_dropdown_to_mask(mask, s_grupo, sel_grupo)
+mask = apply_dropdown_to_mask(mask, s_categoria, sel_categoria)
+mask = apply_dropdown_to_mask(mask, s_segmento, sel_segmento)
+mask = apply_dropdown_to_mask(mask, s_familia, sel_familia)
+mask = apply_dropdown_to_mask(mask, s_subfamilia, sel_subfamilia)
 
 df_view = df[mask].copy()
 # -------- Ordem exigida --------
@@ -110,7 +214,6 @@ edited = st.data_editor(
     hide_index=True,
     disabled=disabled_cols,
     column_config={
-        "QTD_MED": st.column_config.NumberColumn(format="%.2f"),
         "QTD_EMB_COMERCIAL": st.column_config.NumberColumn(format="%d"),
         **dt_cfg,
     },
