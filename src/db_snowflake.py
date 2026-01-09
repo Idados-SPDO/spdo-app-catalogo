@@ -163,7 +163,7 @@ def apply_common_filters(
     # ---------- Filtro por Palavra-chave (em várias colunas: PALAVRA_CHAVE, SINONIMO, DESCRICAO) ----------
     if f_palavra:
         needles = str(f_palavra)
-        cols_busca = [c for c in ["PALAVRA_CHAVE", "SINONIMO", "DESCRICAO", "ITEM", "ESPECIFICACAO"] if c in df.columns]
+        cols_busca = [c for c in ["PALAVRA_CHAVE", "SINONIMO", "DESCRICAO", "ITEM", "ESPECIFICACAO", "GRUPO", "CATEGORIA", "SEGMENTO"] if c in df.columns]
         if cols_busca:
             any_col = pd.Series(False, index=df.index)
             for c in cols_busca:
