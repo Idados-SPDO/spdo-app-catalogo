@@ -135,6 +135,29 @@ def build_user_view(df: pd.DataFrame) -> pd.DataFrame:
 
     return out
 
+
+KEY_SELECTED = "cat_selected_keys"
+KEY_EDITOR = "cat_table_editor"
+KEY_SELECT_ALL = "cat_select_all_visible"
+KEY_VISIBLE_KEYS = "cat_visible_row_keys"
+
+FILTER_KEYS = [
+    "cat_sel_user",
+    "cat_sel_insumo_dd",
+    "cat_sel_codigo_dd",
+    "cat_f_palavra",
+    "cat_sel_grupo_dd",
+    "cat_sel_categoria_dd",
+    "cat_sel_segmento_dd",
+    "cat_sel_familia_dd",
+    "cat_sel_subfamilia_dd",
+]
+
+def reset_catalogo_page_state():
+    for k in FILTER_KEYS + [KEY_SELECTED, KEY_EDITOR, KEY_SELECT_ALL, KEY_VISIBLE_KEYS]:
+        st.session_state.pop(k, None)
+    st.rerun()
+
 def df_to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "catalogo") -> bytes:
     df_x = df.copy()
 
@@ -169,6 +192,11 @@ dt_cfg = build_datetime_column_config(df, DT_COLS)
 user_map = load_user_display_map(session)
 
 st.subheader("Filtros")
+
+c_f1, c_f2 = st.columns([1, 5])
+with c_f1:
+    if st.button("Limpar filtros", key="cat_btn_limpar_filtros"):
+        reset_catalogo_page_state()
 
 # Séries normalizadas (para opções e comparação)
 s_insumo = norm_str_series(df["INSUMO"]) if "INSUMO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
@@ -293,13 +321,125 @@ mask = apply_dropdown_to_mask(mask, s_subfamilia, sel_subfamilia)
 df_filtrado = df[mask].copy()
 
 # ===== Tabela =====
+# ===== Tabela =====
 st.caption(f"Itens no catalogo: **{len(df_filtrado)}**")
-if st.button("Recarregar tabela"):
-    st.rerun()
 
-if is_user_role:
-    df_display = build_user_view(df_filtrado).reset_index(drop=True)
-    st.dataframe(df_display, hide_index=True, use_container_width=True)
+# Inicializa seleção em memória
+if KEY_SELECTED not in st.session_state:
+    st.session_state[KEY_SELECTED] = set()
+elif not isinstance(st.session_state[KEY_SELECTED], set):
+    st.session_state[KEY_SELECTED] = set(st.session_state[KEY_SELECTED] or [])
+
+selected_set = set(st.session_state[KEY_SELECTED])
+
+# Chave única por linha
+if "ID" in df_filtrado.columns:
+    base_id = df_filtrado["ID"].astype("string").fillna("")
 else:
-    df_display = df_filtrado.copy()
-    st.dataframe(df_display, hide_index=True, use_container_width=True, column_config=dt_cfg)
+    base_id = df_filtrado.index.astype("string")
+
+row_key = (base_id + "|" + df_filtrado.index.astype(str)).astype("string")
+current_keys = set(row_key.tolist())
+
+# Guarda as chaves visíveis para o callback do toggle
+st.session_state[KEY_VISIBLE_KEYS] = row_key.tolist()
+
+def _toggle_all_visible():
+    keys = set(st.session_state.get(KEY_VISIBLE_KEYS, []))
+    sel = st.session_state.get(KEY_SELECTED, set())
+    if not isinstance(sel, set):
+        sel = set(sel or [])
+    if st.session_state.get(KEY_SELECT_ALL, False):
+        st.session_state[KEY_SELECTED] = sel | keys
+    else:
+        st.session_state[KEY_SELECTED] = sel - keys
+
+# Barra acima da tabela (placeholder para o toggle)
+b1, b2, b3 = st.columns([1.3, 2.5, 6])
+with b1:
+    if st.button("Recarregar tabela", key="cat_btn_reload"):
+        st.rerun()
+with b2:
+    toggle_ph = st.empty()
+
+# Monta DF exibido (USER vs demais)
+if is_user_role:
+    df_view = build_user_view(df_filtrado)
+    col_cfg = {
+        "Selecionada": st.column_config.CheckboxColumn("Selecionada", help="Marque para incluir no download.")
+    }
+else:
+    df_view = df_filtrado.copy()
+    col_cfg = {
+        "Selecionada": st.column_config.CheckboxColumn("Selecionada", help="Marque para incluir no download.")
+    }
+    col_cfg.update(dt_cfg)
+
+# Sempre cria a coluna Selecionada no índice 0
+df_editor = df_view.copy()
+df_editor.insert(
+    0,
+    "Selecionada",
+    row_key.isin(pd.Series(list(selected_set), dtype="string")).to_numpy()
+)
+
+# Index = row_key (para mapear seleção)
+df_editor.index = row_key
+
+# Deixa tudo read-only, exceto Selecionada
+disabled_cols = [c for c in df_editor.columns if c != "Selecionada"]
+
+df_edited = st.data_editor(
+    df_editor,
+    use_container_width=True,
+    hide_index=True,
+    column_config=col_cfg,
+    disabled=disabled_cols,
+    num_rows="fixed",
+    key=KEY_EDITOR,
+)
+
+# Atualiza seleção com base no que foi marcado manualmente na tabela
+selected_now = set(df_edited.index[df_edited["Selecionada"]].tolist())
+
+# Preserva seleções que não estão visíveis + aplica o estado atual visível
+st.session_state[KEY_SELECTED] = (selected_set - current_keys) | selected_now
+selected_set = set(st.session_state[KEY_SELECTED])
+
+# Agora que a seleção foi atualizada, sincroniza o toggle (todos visíveis selecionados?)
+all_visible_selected = (len(current_keys) > 0) and current_keys.issubset(selected_set)
+st.session_state[KEY_SELECT_ALL] = all_visible_selected
+
+# Renderiza o toggle no placeholder (fica acima da tabela)
+with toggle_ph:
+    st.toggle(
+        "Selecionar todos (visíveis)",
+        key=KEY_SELECT_ALL,
+        on_change=_toggle_all_visible,
+    )
+
+# Selecionados (apenas do recorte atual)
+selected_in_view = selected_set & current_keys
+mask_sel = row_key.isin(list(selected_in_view))
+df_selected_base = df_filtrado[mask_sel].copy()
+
+st.caption(f"Selecionados (nesta tabela): **{len(df_selected_base)}**")
+
+# DF para download segue perfil
+if is_user_role:
+    df_download = build_user_view(df_selected_base).reset_index(drop=True)
+else:
+    df_download = df_selected_base.reset_index(drop=True)
+
+xlsx_bytes = df_to_xlsx_bytes(df_download, sheet_name="selecionados")
+
+st.download_button(
+    "Baixar itens selecionados",
+    data=xlsx_bytes,
+    file_name="catalogo_selecionados.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    disabled=df_selected_base.empty,
+    key="cat_btn_download_selected",
+)
+
+
