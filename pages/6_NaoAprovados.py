@@ -172,6 +172,28 @@ def _persist_sinonimo_batch(session, table_fqn: str, df_ids: pd.DataFrame, id_co
     """
     session.sql(sql).collect()
 
+KEY_SELECTED = "cor_selected_keys"
+KEY_EDITOR = "cor_table_editor"
+KEY_SELECT_ALL = "cor_select_all_visible"
+KEY_VISIBLE_KEYS = "cor_visible_row_keys"
+
+FILTER_KEYS = [
+    "cor_f_id",
+    "cor_sel_user",
+    "cor_sel_insumo_dd",
+    "cor_sel_codigo_dd",
+    "cor_f_palavra",
+    "cor_sel_grupo_dd",
+    "cor_sel_categoria_dd",
+    "cor_sel_segmento_dd",
+    "cor_sel_familia_dd",
+    "cor_sel_subfamilia_dd",
+]
+
+def reset_catalogo_page_state():
+    for k in FILTER_KEYS + [KEY_SELECTED, KEY_EDITOR, KEY_SELECT_ALL, KEY_VISIBLE_KEYS]:
+        st.session_state.pop(k, None)
+    st.rerun()
 
 ##### Filtros
 ALL_LABEL = "Todos"
@@ -201,6 +223,8 @@ def dropdown_options(s_norm: pd.Series, *, all_label: str = ALL_LABEL, null_labe
     opts.extend(uniq.tolist())
     return opts
 
+
+
 def apply_dropdown_to_mask(
     mask: pd.Series,
     s_norm: pd.Series,
@@ -215,6 +239,27 @@ def apply_dropdown_to_mask(
         return mask & s_norm.isna()
     return mask & (s_norm == selected)
 
+
+def _series_and_opts(df_in: pd.DataFrame, col: str, *, drop_dot_zero: bool = False):
+    if col in df_in.columns:
+        s = norm_str_series(df_in[col], drop_dot_zero=drop_dot_zero)
+    else:
+        s = pd.Series(pd.NA, index=df_in.index, dtype="string")
+    return s, dropdown_options(s)
+
+def _apply_selected(df_in: pd.DataFrame, s_norm: pd.Series, selected: str) -> pd.DataFrame:
+    if selected == ALL_LABEL:
+        return df_in
+    if selected == NULL_LABEL:
+        return df_in[s_norm.isna()]
+    return df_in[s_norm == selected]
+
+def _selectbox_with_reset(label: str, options: list[str], key: str) -> str:
+    cur = st.session_state.get(key, ALL_LABEL)
+    if cur not in options:
+        st.session_state[key] = ALL_LABEL
+        cur = ALL_LABEL
+    return st.selectbox(label, options, index=options.index(cur), key=key)
 
 def resend_to_validacao(session, edited_df: pd.DataFrame, ids: list[int], user: dict):
     """
@@ -317,95 +362,120 @@ if df_cor.empty:
 else:
         user_map = load_user_display_map(session)
 
+        ####
         st.subheader("Filtros")
-        ######
+        if st.button("🧹 Limpar filtros", key="cor_btn_limpar_filtros"):
+            reset_catalogo_page_state()
+
+        # Séries normalizadas (para opções e comparação) — df_cor inteiro
         s_insumo = norm_str_series(df_cor["INSUMO"]) if "INSUMO" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
         s_codigo = norm_str_series(df_cor["CODIGO_PRODUTO"], drop_dot_zero=True) if "CODIGO_PRODUTO" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
 
-        s_grupo = norm_str_series(df_cor["GRUPO"]) if "GRUPO" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
-        s_categoria = norm_str_series(df_cor["CATEGORIA"]) if "CATEGORIA" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
-        s_segmento = norm_str_series(df_cor["SEGMENTO"]) if "SEGMENTO" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
-        s_familia = norm_str_series(df_cor["FAMILIA"]) if "FAMILIA" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
-        s_subfamilia = norm_str_series(df_cor["SUBFAMILIA"]) if "SUBFAMILIA" in df_cor.columns else pd.Series(pd.NA, index=df_cor.index, dtype="string")
-
-        # Opções
         opt_insumo = dropdown_options(s_insumo)
         opt_codigo = dropdown_options(s_codigo)
 
-        opt_grupo = dropdown_options(s_grupo)
-        opt_categoria = dropdown_options(s_categoria)
-        opt_segmento = dropdown_options(s_segmento)
-        opt_familia = dropdown_options(s_familia)
-        opt_subfamilia = dropdown_options(s_subfamilia)
-
+        # =========================
         # Linha 1 (4 colunas)
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
+        # ID | Usuário | Insumo | Código
+        # =========================
+        r1 = st.columns(4)
+        with r1[0]:
+            sel_id = st.text_input("ID", key="cor_f_id")
+        with r1[1]:
             sel_user = st.selectbox(
                 "Usuário (cadastro)",
                 build_user_options(df_cor, user_map),
                 index=0,
-                key="cat_sel_user"
+                key="cor_sel_user",
             )
-        with c2:
+        with r1[2]:
             sel_insumo = st.selectbox(
                 "Insumo",
                 opt_insumo,
                 index=0,
-                key="cat_sel_insumo_dd"
+                key="cor_sel_insumo_dd",
             )
-        with c3:
+        with r1[3]:
             sel_codigo = st.selectbox(
                 "Código do Produto (exato)",
                 opt_codigo,
                 index=0,
-                key="cat_sel_codigo_dd"
+                key="cor_sel_codigo_dd",
             )
-        with c4:
-            f_palavra = st.text_input("Palavra-chave (contém)", key="cat_f_palavra")
 
+        # =========================
         # Linha 2 (4 colunas)
-        d1, d2, d3, d4 = st.columns(4)
-        with d1:
-            sel_grupo = st.selectbox("Grupo", opt_grupo, index=0, key="cat_sel_grupo_dd")
-        with d2:
-            sel_categoria = st.selectbox("Categoria", opt_categoria, index=0, key="cat_sel_categoria_dd")
-        with d3:
-            sel_segmento = st.selectbox("Segmento", opt_segmento, index=0, key="cat_sel_segmento_dd")
-        with d4:
-            sel_familia = st.selectbox("Família", opt_familia, index=0, key="cat_sel_familia_dd")
+        # Palavra-chave | Grupo | Categoria | Segmento
+        # =========================
+        r2 = st.columns(4)
+        with r2[0]:
+            f_palavra = st.text_input("Palavra-chave (contém)", key="cor_f_palavra")
 
-        # Linha 3 (Subfamília)
-        e1, e2, e3, e4 = st.columns(4)
-        with e1:
-            sel_subfamilia = st.selectbox("Subfamília", opt_subfamilia, index=0, key="cat_sel_subfamilia_dd")
-
+        # 1) mask base: usuário + palavra
         mask = apply_common_filters(
             df_cor,
             sel_user_name=sel_user,
-            f_insumo="",  
-            f_codigo="",   
-            f_palavra=f_palavra,  # mantém
+            f_insumo="",
+            f_codigo="",
+            f_palavra=f_palavra,
             user_map=user_map,
         )
 
-        # Aplica filtros dropdown (exatos)
+        # 2) aplica Insumo/Código exatos no mask base
         mask = apply_dropdown_to_mask(mask, s_insumo, sel_insumo)
         mask = apply_dropdown_to_mask(mask, s_codigo, sel_codigo)
 
-        mask = apply_dropdown_to_mask(mask, s_grupo, sel_grupo)
-        mask = apply_dropdown_to_mask(mask, s_categoria, sel_categoria)
-        mask = apply_dropdown_to_mask(mask, s_segmento, sel_segmento)
-        mask = apply_dropdown_to_mask(mask, s_familia, sel_familia)
-        mask = apply_dropdown_to_mask(mask, s_subfamilia, sel_subfamilia)
+        # 3) aplica ID (exato)
+        sel_id_norm = (sel_id or "").strip()
+        if sel_id_norm:
+            if "ID" in df_cor.columns and sel_id_norm.isdigit():
+                mask = mask & (df_cor["ID"].astype("Int64") == int(sel_id_norm))
+            else:
+                st.warning("ID inválido. Use um número inteiro.")
+                mask = mask & False
 
-        
-        #####
+        # 4) escopo inicial para cascata
+        df_scope = df_cor[mask].copy()
 
-        df_cor_view = df_cor[mask].copy()
+        with r2[1]:
+            s_grupo_sc, opt_grupo_sc = _series_and_opts(df_scope, "GRUPO")
+            sel_grupo = _selectbox_with_reset("Grupo", opt_grupo_sc, key="cor_sel_grupo_dd")
+            df_scope = _apply_selected(df_scope, s_grupo_sc, sel_grupo)
 
+        with r2[2]:
+            s_cat_sc, opt_cat_sc = _series_and_opts(df_scope, "CATEGORIA")
+            sel_categoria = _selectbox_with_reset("Categoria", opt_cat_sc, key="cor_sel_categoria_dd")
+            df_scope = _apply_selected(df_scope, s_cat_sc, sel_categoria)
 
+        with r2[3]:
+            s_seg_sc, opt_seg_sc = _series_and_opts(df_scope, "SEGMENTO")
+            sel_segmento = _selectbox_with_reset("Segmento", opt_seg_sc, key="cor_sel_segmento_dd")
+            df_scope = _apply_selected(df_scope, s_seg_sc, sel_segmento)
 
+        # =========================
+        # Linha 3 (4 colunas)
+        # Família | Subfamília | (vazio) | (vazio)
+        # =========================
+        r3 = st.columns(4)
+        with r3[0]:
+            s_fam_sc, opt_fam_sc = _series_and_opts(df_scope, "FAMILIA")
+            sel_familia = _selectbox_with_reset("Família", opt_fam_sc, key="cor_sel_familia_dd")
+            df_scope = _apply_selected(df_scope, s_fam_sc, sel_familia)
+
+        with r3[1]:
+            s_sub_sc, opt_sub_sc = _series_and_opts(df_scope, "SUBFAMILIA")
+            sel_subfamilia = _selectbox_with_reset("Subfamília", opt_sub_sc, key="cor_sel_subfamilia_dd")
+            df_scope = _apply_selected(df_scope, s_sub_sc, sel_subfamilia)
+
+        with r3[2]:
+            st.empty()
+        with r3[3]:
+            st.empty()
+
+        # Resultado final já filtrado pela cascata
+        df_cor_view = df_scope
+
+        ####
         if df_cor_view.empty:
             st.info("Nenhum item com os filtros aplicados.")
         else:

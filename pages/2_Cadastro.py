@@ -1,10 +1,13 @@
 import pandas as pd
 import streamlit as st
+import xlsxwriter
 from src.db_snowflake import codigo_produto_exists_any, fetch_existing_codigos_dual, get_session, insert_item
 from src.utils import data_hoje, extrair_valores, campos_obrigatorios_ok, gerar_sinonimo, gerar_palavra_chave, _pick, _to_float_safe, _to_int_safe, gerar_template_excel_catalogo
 from io import BytesIO
 from src.auth import current_user, require_roles
 import numpy as np
+
+from src.variables import FQN_TBL_GRUPO, FQN_TBL_CATEGORIA, FQN_TBL_SEGMENTO, FQN_TBL_FAMILIA, FQN_TBL_SUBFAMILIA, FQN_TBL_TIPO_CODIGO,FQN_TBL_MARCA, FQN_TBL_EMB_PRODUTO , FQN_TBL_UN_MED , FQN_TBL_EMB_COMERCIAL
 
 require_roles("OPERACIONAL", "ADMIN")
 
@@ -25,6 +28,15 @@ def append_reason(df: pd.DataFrame, mask: pd.Series, reason: str) -> None:
 
 session = get_session()
 
+@st.cache_data(show_spinner=False, ttl=600)
+def get_catalog_options(table):
+    df = session.table(table).to_pandas()
+    label_cols = [c for c in df.columns if c.upper() != "ID"]
+    if len(label_cols) != 1:
+        raise ValueError(f"Tabela {table}: colunas inesperadas {list(df.columns)}")
+    label_col = label_cols[0]
+    return df[label_col].dropna().astype(str).str.strip().tolist()
+
 tab_form, tab_excel = st.tabs(["✍️ Formulário manual", "📥 Formulário Excel"])
 
 
@@ -34,15 +46,15 @@ with tab_form:
 
         with c1:
             referencia  = st.text_input("REFERENCIA")
-            grupo       = st.text_input("GRUPO")
-            categoria   = st.text_input("CATEGORIA")
-            segmento    = st.text_input("SEGMENTO")
-            familia     = st.text_input("FAMILIA")
-            subfamilia  = st.text_input("SUBFAMILIA")
+            grupo       = st.selectbox("GRUPO",get_catalog_options(FQN_TBL_GRUPO))
+            categoria   = st.selectbox("CATEGORIA",get_catalog_options(FQN_TBL_CATEGORIA))
+            segmento    = st.selectbox("SEGMENTO",get_catalog_options(FQN_TBL_SEGMENTO))
+            familia     = st.selectbox("FAMILIA",get_catalog_options(FQN_TBL_FAMILIA))
+            subfamilia  = st.selectbox("SUBFAMILIA",get_catalog_options(FQN_TBL_SUBFAMILIA))
 
 
         with c2:
-            tipo_codigo    = st.text_input("TIPO_CODIGO")
+            tipo_codigo    = st.selectbox("TIPO_CODIGO",get_catalog_options(FQN_TBL_TIPO_CODIGO))
             codigo_produto = st.text_input("CODIGO_PRODUTO")
             insumo         = st.text_input("INSUMO")  # opcional
             item           = st.text_input("ITEM")
@@ -50,11 +62,11 @@ with tab_form:
             qtd_emb_produto= st.number_input("QTD_EMB_PRODUTO",  min_value=0, step=1)
 
         with c3:
-            marca            = st.text_input("MARCA")
-            emb_produto      = st.text_input("EMB_PRODUTO")
-            un_med           = st.text_input("UN_MED")
+            marca            = st.selectbox("MARCA",get_catalog_options(FQN_TBL_MARCA))
+            emb_produto      = st.selectbox("EMB_PRODUTO",get_catalog_options(FQN_TBL_EMB_PRODUTO))
+            un_med           = st.selectbox("UN_MED",get_catalog_options(FQN_TBL_UN_MED))
             qtd_med          = st.number_input("QTD_MED", min_value=0.00, step=0.01)
-            emb_comercial    = st.text_input("EMB_COMERCIAL")
+            emb_comercial    = st.selectbox("EMB_COMERCIAL",get_catalog_options(FQN_TBL_EMB_COMERCIAL))
             qtd_emb_comercial= st.number_input("QTD_EMB_COMERCIAL", min_value=0, step=1)
 
         submitted = st.form_submit_button("💾 Salvar")
@@ -125,7 +137,73 @@ with tab_form:
 
 # =========================
 # 2) LEITOR EXCEL (somente leitura no preview; com botão para subir para Snowflake)
+
 # =========================
+        EXPECTED = [
+            "REFERENCIA","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
+            "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","ESPECIFICACAO",
+            "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
+        ]
+        def gerar_template_excel_catalogo_com_dropdowns(session) -> bytes:
+            options_map = {
+                "GRUPO": get_catalog_options(FQN_TBL_GRUPO),
+                "CATEGORIA": get_catalog_options(FQN_TBL_CATEGORIA),
+                "SEGMENTO": get_catalog_options(FQN_TBL_SEGMENTO),
+                "FAMILIA": get_catalog_options(FQN_TBL_FAMILIA),
+                "SUBFAMILIA": get_catalog_options(FQN_TBL_SUBFAMILIA),
+                "TIPO_CODIGO": get_catalog_options(FQN_TBL_TIPO_CODIGO),
+                "MARCA": get_catalog_options(FQN_TBL_MARCA),
+                "EMB_PRODUTO": get_catalog_options(FQN_TBL_EMB_PRODUTO),
+                "UN_MED": get_catalog_options(FQN_TBL_UN_MED),
+                "EMB_COMERCIAL": get_catalog_options(FQN_TBL_EMB_COMERCIAL),
+            }
+
+            buf = BytesIO()
+            with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                wb = writer.book
+
+                ws = wb.add_worksheet("Modelo")
+                ws_listas = wb.add_worksheet("LISTAS")
+                ws_listas.hide()
+
+                # escreve cabeçalho do template
+                for col_idx, col_name in enumerate(EXPECTED):
+                    ws.write(0, col_idx, col_name)
+
+                # cria listas + named ranges + validação
+                max_rows = 5000  # até onde o dropdown vale
+                for list_col_idx, (col_name, values) in enumerate(options_map.items()):
+                    # escreve a lista na aba escondida
+                    ws_listas.write(0, list_col_idx, col_name)
+                    for r, v in enumerate(values, start=1):
+                        ws_listas.write(r, list_col_idx, v)
+
+                    # named range (Excel não aceita referência direta a outra aba em validação, por isso nomeamos)
+                    col_letter = xlsxwriter.utility.xl_col_to_name(list_col_idx) # type: ignore
+                    first = f"LISTAS!${col_letter}$2"
+                    last  = f"LISTAS!${col_letter}${len(values)+1}"
+                    range_name = f"LIST_{col_name}"
+                    wb.define_name(range_name, f"={first}:{last}")
+
+                    # aplica validação na coluna do template
+                    target_col_idx = EXPECTED.index(col_name)
+                    ws.data_validation(
+                        1, target_col_idx, max_rows, target_col_idx,  # linha 2 até max_rows+1
+                        {
+                            "validate": "list",
+                            "source": f"={range_name}",
+                            "error_title": "Valor inválido",
+                            "error_message": "Selecione um valor da lista.",
+                        }
+                    )
+
+                # salva
+                writer.sheets["Modelo"] = ws
+                writer.sheets["LISTAS"] = ws_listas
+
+            return buf.getvalue()
+        
+
 with tab_excel:
     st.write("Carregue um arquivo **Excel** para visualizar e enviar os dados para o Snowflake.")
 
@@ -133,7 +211,7 @@ with tab_excel:
     st.caption("Baixe o modelo, preencha e depois envie no uploader abaixo.")
     st.download_button(
         "⬇️ Baixar template Excel",
-        data=gerar_template_excel_catalogo(),
+        data=gerar_template_excel_catalogo_com_dropdowns(session),
         file_name="template_catalogo.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
@@ -153,6 +231,7 @@ with tab_excel:
             "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","ESPECIFICACAO",
             "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
         ]
+        
         for c in EXPECTED:
             if c not in df_out.columns:
                 df_out[c] = ""
@@ -207,13 +286,40 @@ with tab_excel:
             motivos_dup.append("") 
 
         df_out["EXPLICAÇÃO"] = missing_list
+        
+        allowed_map = {
+            "GRUPO": get_catalog_options(FQN_TBL_GRUPO),
+            "CATEGORIA": get_catalog_options(FQN_TBL_CATEGORIA),
+            "SEGMENTO": get_catalog_options(FQN_TBL_SEGMENTO),
+            "FAMILIA": get_catalog_options(FQN_TBL_FAMILIA),
+            "SUBFAMILIA": get_catalog_options(FQN_TBL_SUBFAMILIA),
+            "TIPO_CODIGO": get_catalog_options(FQN_TBL_TIPO_CODIGO),
+            "MARCA": get_catalog_options(FQN_TBL_MARCA),
+            "EMB_PRODUTO": get_catalog_options(FQN_TBL_EMB_PRODUTO),
+            "UN_MED": get_catalog_options(FQN_TBL_UN_MED),
+            "EMB_COMERCIAL": get_catalog_options(FQN_TBL_EMB_COMERCIAL),
+        }
+
+        # (opcional) comparação case-insensitive:
+        def _norm_series(s: pd.Series) -> pd.Series:
+            return s.astype(str).str.strip()  # use .str.upper() se quiser ignorar maiúsc/minúsc
+
+        def _norm_set(values: list[str]) -> set[str]:
+            return {str(v).strip() for v in values}  # use .upper() idem
+
+        for col, allowed_vals in allowed_map.items():
+            allowed = _norm_set(allowed_vals)
+            s = _norm_series(df_out[col])
+            invalid_mask = (s != "") & (~s.isin(list(allowed)))
+            append_reason(df_out, invalid_mask, f"{col} fora do catálogo (dropdown)")
+            
         append_reason(df_out, dups_in_file_mask, "CODIGO_PRODUTO duplicado no arquivo")
 
         append_reason(df_out, dups_in_db_aprv_mask, "CODIGO_PRODUTO já existe em APROVADOS")
 
         append_reason(df_out, dups_in_db_pend_mask, "CODIGO_PRODUTO já existe em PENDENTES")
 
-        has_errors = df_out["EXPLICAÇÃO"].str.strip() != ""
+        has_errors = df_out["EXPLICAÇÃO"].astype(str).str.strip() != ""
 
         st.success("Pré-visualização (nada foi salvo ainda).")
         st.write(f"**{len(df_out):,}** linha(s) × **{len(df_out.columns):,}** coluna(s).")
@@ -249,7 +355,7 @@ with tab_excel:
 
         # --- Botão: Enviar apenas as linhas válidas
         #     (fica desabilitado apenas se NÃO houver linhas válidas)
-        can_upload_some = not df_valid.empty
+        can_upload_some = (not df_valid.empty) and (not has_errors.any())
         if st.button("⬆️ Enviar apenas linhas válidas", disabled=not can_upload_some):
             total_valid = len(df_valid)
             ok_count, fails = 0, []

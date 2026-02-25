@@ -142,6 +142,7 @@ KEY_SELECT_ALL = "cat_select_all_visible"
 KEY_VISIBLE_KEYS = "cat_visible_row_keys"
 
 FILTER_KEYS = [
+    "cat_f_id",
     "cat_sel_user",
     "cat_sel_insumo_dd",
     "cat_sel_codigo_dd",
@@ -193,10 +194,8 @@ user_map = load_user_display_map(session)
 
 st.subheader("Filtros")
 
-c_f1, c_f2 = st.columns([1, 5])
-with c_f1:
-    if st.button("Limpar filtros", key="cat_btn_limpar_filtros"):
-        reset_catalogo_page_state()
+if st.button("🧹 Limpar filtros", key="cat_btn_limpar_filtros"):
+    reset_catalogo_page_state()
 
 # Séries normalizadas (para opções e comparação)
 s_insumo = norm_str_series(df["INSUMO"]) if "INSUMO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
@@ -218,34 +217,44 @@ opt_segmento = dropdown_options(s_segmento)
 opt_familia = dropdown_options(s_familia)
 opt_subfamilia = dropdown_options(s_subfamilia)
 
+# =========================
 # Linha 1 (4 colunas)
-c1, c2, c3, c4 = st.columns(4)
-with c1:
+# ID | Usuário | Insumo | Código
+# =========================
+r1 = st.columns(4)
+with r1[0]:
+    sel_id = st.text_input("ID", key="cat_f_id")
+with r1[1]:
     sel_user = st.selectbox(
         "Usuário (cadastro)",
         build_user_options(df, user_map),
         index=0,
         key="cat_sel_user"
     )
-with c2:
+with r1[2]:
     sel_insumo = st.selectbox(
         "Insumo",
         opt_insumo,
         index=0,
         key="cat_sel_insumo_dd"
     )
-    pass
-with c3:
+with r1[3]:
     sel_codigo = st.selectbox(
         "Código do Produto (exato)",
         opt_codigo,
         index=0,
         key="cat_sel_codigo_dd"
     )
-    pass
-with c4:
+
+# =========================
+# Linha 2 (4 colunas)
+# Palavra-chave | Grupo | Categoria | Segmento
+# =========================
+r2 = st.columns(4)
+with r2[0]:
     f_palavra = st.text_input("Palavra-chave (contém)", key="cat_f_palavra")
 
+# mask base (usuário + palavra)
 mask = apply_common_filters(
     df,
     sel_user_name=sel_user,
@@ -254,8 +263,24 @@ mask = apply_common_filters(
     f_palavra=f_palavra,
     user_map=user_map,
 )
+
+# aplica Insumo/Código (exatos) no mask base
+mask = apply_dropdown_to_mask(mask, s_insumo, sel_insumo)
+mask = apply_dropdown_to_mask(mask, s_codigo, sel_codigo)
+
+# aplica ID (exato) no mask base
+sel_id_norm = (sel_id or "").strip()
+if sel_id_norm:
+    if "ID" in df.columns and sel_id_norm.isdigit():
+        mask = mask & (df["ID"].astype("Int64") == int(sel_id_norm))
+    else:
+        st.warning("ID inválido. Use um número inteiro.")
+        mask = mask & False
+
+# escopo inicial para cascata
 df_scope = df[mask].copy()
 
+# helpers da cascata (mantém os seus)
 def _series_and_opts(df_in: pd.DataFrame, col: str, *, drop_dot_zero: bool = False):
     if col in df_in.columns:
         s = norm_str_series(df_in[col], drop_dot_zero=drop_dot_zero)
@@ -277,50 +302,43 @@ def _selectbox_with_reset(label: str, options: list[str], key: str) -> str:
         cur = ALL_LABEL
     return st.selectbox(label, options, index=options.index(cur), key=key)
 
-# Linha 2 (4 colunas)
-d1, d2, d3, d4 = st.columns(4)
+with r2[1]:
+    s_grupo_sc, opt_grupo_sc = _series_and_opts(df_scope, "GRUPO")
+    sel_grupo = _selectbox_with_reset("Grupo", opt_grupo_sc, key="cat_sel_grupo_dd")
+    df_scope = _apply_selected(df_scope, s_grupo_sc, sel_grupo)
 
-with d1:
-    s_grupo, opt_grupo = _series_and_opts(df_scope, "GRUPO")
-    sel_grupo = _selectbox_with_reset("Grupo", opt_grupo, key="cat_sel_grupo_dd")
-    df_scope = _apply_selected(df_scope, s_grupo, sel_grupo)
+with r2[2]:
+    s_cat_sc, opt_cat_sc = _series_and_opts(df_scope, "CATEGORIA")
+    sel_categoria = _selectbox_with_reset("Categoria", opt_cat_sc, key="cat_sel_categoria_dd")
+    df_scope = _apply_selected(df_scope, s_cat_sc, sel_categoria)
 
-with d2:
-    s_categoria, opt_categoria = _series_and_opts(df_scope, "CATEGORIA")
-    sel_categoria = _selectbox_with_reset("Categoria", opt_categoria, key="cat_sel_categoria_dd")
-    df_scope = _apply_selected(df_scope, s_categoria, sel_categoria)
+with r2[3]:
+    s_seg_sc, opt_seg_sc = _series_and_opts(df_scope, "SEGMENTO")
+    sel_segmento = _selectbox_with_reset("Segmento", opt_seg_sc, key="cat_sel_segmento_dd")
+    df_scope = _apply_selected(df_scope, s_seg_sc, sel_segmento)
 
-with d3:
-    s_segmento, opt_segmento = _series_and_opts(df_scope, "SEGMENTO")
-    sel_segmento = _selectbox_with_reset("Segmento", opt_segmento, key="cat_sel_segmento_dd")
-    df_scope = _apply_selected(df_scope, s_segmento, sel_segmento)
+# =========================
+# Linha 3 (4 colunas)
+# Família | Subfamília | (vazio) | (vazio)
+# =========================
+r3 = st.columns(4)
+with r3[0]:
+    s_fam_sc, opt_fam_sc = _series_and_opts(df_scope, "FAMILIA")
+    sel_familia = _selectbox_with_reset("Família", opt_fam_sc, key="cat_sel_familia_dd")
+    df_scope = _apply_selected(df_scope, s_fam_sc, sel_familia)
 
-with d4:
-    s_familia, opt_familia = _series_and_opts(df_scope, "FAMILIA")
-    sel_familia = _selectbox_with_reset("Família", opt_familia, key="cat_sel_familia_dd")
-    df_scope = _apply_selected(df_scope, s_familia, sel_familia)
+with r3[1]:
+    s_sub_sc, opt_sub_sc = _series_and_opts(df_scope, "SUBFAMILIA")
+    sel_subfamilia = _selectbox_with_reset("Subfamília", opt_sub_sc, key="cat_sel_subfamilia_dd")
+    df_scope = _apply_selected(df_scope, s_sub_sc, sel_subfamilia)
 
-# Linha 3 (Subfamília)
-e1, e2, e3, e4 = st.columns(4)
+with r3[2]:
+    st.empty()
+with r3[3]:
+    st.empty()
 
-with e1:
-    s_subfamilia, opt_subfamilia = _series_and_opts(df_scope, "SUBFAMILIA")
-    sel_subfamilia = _selectbox_with_reset("Subfamília", opt_subfamilia, key="cat_sel_subfamilia_dd")
-    df_scope = _apply_selected(df_scope, s_subfamilia, sel_subfamilia)
-
-# Aplica filtros dropdown (exatos)
-mask = apply_dropdown_to_mask(mask, s_insumo, sel_insumo)
-mask = apply_dropdown_to_mask(mask, s_codigo, sel_codigo)
-
-mask = apply_dropdown_to_mask(mask, s_grupo, sel_grupo)
-mask = apply_dropdown_to_mask(mask, s_categoria, sel_categoria)
-mask = apply_dropdown_to_mask(mask, s_segmento, sel_segmento)
-mask = apply_dropdown_to_mask(mask, s_familia, sel_familia)
-mask = apply_dropdown_to_mask(mask, s_subfamilia, sel_subfamilia)
-
-df_filtrado = df[mask].copy()
-
-# ===== Tabela =====
+# ✅ Resultado final (já com cascata + filtros globais + ID)
+df_filtrado = df_scope
 # ===== Tabela =====
 st.caption(f"Itens no catalogo: **{len(df_filtrado)}**")
 
