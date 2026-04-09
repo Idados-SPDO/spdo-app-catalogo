@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from src.db_snowflake import apply_common_filters, build_user_options, get_session, load_user_display_map
 from src.auth import current_user, require_roles
-from src.utils import extrair_valores, gerar_sinonimo 
+from src.utils import extrair_valores, gerar_sinonimo, gerar_palavra_chave
 from src.variables import FQN_MAIN, FQN_COR, FQN_APR
 
 st.title("Não Aprovados")
@@ -126,44 +126,58 @@ def _recalc_sinonimo_df_inplace(df: pd.DataFrame) -> pd.DataFrame:
     df["SINONIMO"] = out["__SIN_NEW__"]
     return df
 
+def _recalc_palavra_chave_df_inplace(df: pd.DataFrame) -> pd.DataFrame:
+    if "PALAVRA_CHAVE" not in df.columns:
+        df["PALAVRA_CHAVE"] = ""
+    df["PALAVRA_CHAVE"] = df.apply(lambda r: gerar_palavra_chave(
+        r.get("SUBFAMILIA"), r.get("ITEM"), r.get("MARCA"),
+        r.get("EMB_PRODUTO"), r.get("QTD_MED"), r.get("UN_MED"),
+        r.get("FAMILIA"),
+    ), axis=1)
+    return df
+
 def _persist_sinonimo_batch(session, table_fqn: str, df_ids: pd.DataFrame, id_col: str = "ID"):
     """
     Atualiza no banco em lote:
       - Atualiza DESCRICAO (apenas quando calculada nova)
       - Atualiza SINONIMO (sempre com o valor recalculado)
+      - Atualiza PALAVRA_CHAVE (quando presente no df_ids)
     Usa CASE ... WHEN ... THEN ... para eficiência.
     """
-    import pandas as pd
     if df_ids.empty or id_col not in df_ids or "SINONIMO" not in df_ids:
         return
 
-    # Garantir colunas
     work = df_ids[[id_col, "SINONIMO"]].copy()
     has_desc = "DESCRICAO" in df_ids.columns
+    has_pc   = "PALAVRA_CHAVE" in df_ids.columns
     if has_desc:
         work["__DESC_APPLY__"] = df_ids["DESCRICAO"]
-    # prepara pares
+    if has_pc:
+        work["__PC_APPLY__"] = df_ids["PALAVRA_CHAVE"]
+
     pairs = []
     for _, r in work.iterrows():
-        _id = int(r[id_col])
+        _id  = int(r[id_col])
         _sin = "" if pd.isna(r["SINONIMO"]) else str(r["SINONIMO"])
-        _desc = None
-        if has_desc:
-            _desc = None if pd.isna(r["__DESC_APPLY__"]) else str(r["__DESC_APPLY__"])
-        pairs.append((_id, _sin, _desc))
+        _desc = None if (not has_desc or pd.isna(r["__DESC_APPLY__"])) else str(r["__DESC_APPLY__"])
+        _pc   = None if (not has_pc   or pd.isna(r["__PC_APPLY__"]))  else str(r["__PC_APPLY__"])
+        pairs.append((_id, _sin, _desc, _pc))
 
     if not pairs:
         return
 
-    ids_csv = ", ".join(str(i) for (i, _, __) in pairs)
-    when_sin = " ".join([f"WHEN {i} THEN {_sql_escape(s)}" for (i, s, __) in pairs])
+    ids_csv  = ", ".join(str(i)  for (i, _, __, ___) in pairs)
+    when_sin = " ".join([f"WHEN {i} THEN {_sql_escape(s)}" for (i, s, _, __) in pairs])
 
     sets = [f"SINONIMO = CASE {id_col} {when_sin} END"]
     if has_desc:
-        # Atualiza DESCRICAO somente quando veio calculada (evitar sobrepor se usuário alterou manualmente)
         when_desc = " ".join([f"WHEN {i} THEN {_sql_escape(d) if d is not None else 'DESCRICAO'}"
-                              for (i, _, d) in pairs])
+                              for (i, _, d, __) in pairs])
         sets.append(f"DESCRICAO = CASE {id_col} {when_desc} END")
+    if has_pc:
+        when_pc = " ".join([f"WHEN {i} THEN {_sql_escape(p) if p is not None else 'PALAVRA_CHAVE'}"
+                            for (i, _, __, p) in pairs])
+        sets.append(f"PALAVRA_CHAVE = CASE {id_col} {when_pc} END")
 
     sql = f"""
         UPDATE {table_fqn}
@@ -505,6 +519,53 @@ else:
             df_cor_view = coerce_datetimes(df_cor_view, DT_COLS_COR)
             dt_cfg_cor  = build_datetime_column_config(df_cor_view, DT_COLS_COR)
             df_cor_view = reorder(df_cor_view, ORDER_CORRECOES, prepend=["Selecionar"])
+
+            # ── Pré-processamento: recalcular SINONIMO/PALAVRA_CHAVE no estado do editor ──
+            # Injeta os valores recalculados antes do st.data_editor para que apareçam
+            # na mesma renderização em que o usuário editou um campo dependente.
+            _EDITOR_KEY   = "editor_correcao_page"
+            _DEPS_SINONIMO = {"ITEM","ESPECIFICACAO","MARCA","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
+            _DEPS_PALAVRA  = {"SUBFAMILIA","ITEM","MARCA","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
+
+            _editor_state = st.session_state.get(_EDITOR_KEY, {})
+            _edited_rows  = _editor_state.get("edited_rows", {})
+
+            for _ri_str, _changes in list(_edited_rows.items()):
+                _ri = int(_ri_str)
+                _changed = set(_changes.keys())
+                if not (_changed & (_DEPS_SINONIMO | _DEPS_PALAVRA)):
+                    continue
+                if _ri >= len(df_cor_view):
+                    continue
+                _orig   = df_cor_view.iloc[_ri].to_dict()
+                _merged = {**_orig, **_changes}
+                _row_edits = st.session_state[_EDITOR_KEY]["edited_rows"][_ri_str]
+
+                if _changed & _DEPS_SINONIMO:
+                    _desc_calc = _build_desc(_merged)
+                    _row_edits["SINONIMO"] = gerar_sinonimo(
+                        _merged.get("ITEM"),
+                        _desc_calc or _merged.get("DESCRICAO", ""),
+                        _merged.get("MARCA"),
+                        _merged.get("QTD_MED"),
+                        _merged.get("UN_MED"),
+                        _merged.get("EMB_PRODUTO"),
+                        _merged.get("QTD_EMB_COMERCIAL"),
+                        _merged.get("EMB_COMERCIAL"),
+                    )
+
+                if _changed & _DEPS_PALAVRA:
+                    _row_edits["PALAVRA_CHAVE"] = gerar_palavra_chave(
+                        _merged.get("SUBFAMILIA"),
+                        _merged.get("ITEM"),
+                        _merged.get("MARCA"),
+                        _merged.get("EMB_PRODUTO"),
+                        _merged.get("QTD_MED"),
+                        _merged.get("UN_MED"),
+                        _merged.get("FAMILIA"),
+                    )
+            # ── fim pré-processamento ──
+
             LOCK_COR = {"ID","DATA_CADASTRO","USUARIO_CADASTRO","DATA_REPROVACAO","USUARIO_REPROVACAO","MOTIVO"}
 
             col_cfg_cor = {}
@@ -538,9 +599,12 @@ else:
                     try:
                         sel_df = edited_cor[edited_cor["ID"].isin(sel_ids)].copy()
                         sel_df = _recalc_sinonimo_df_inplace(sel_df)
-                        _persist_sinonimo_batch(session, FQN_COR, sel_df[["ID","DESCRICAO","SINONIMO"]])
+                        sel_df = _recalc_palavra_chave_df_inplace(sel_df)
+                        _persist_sinonimo_batch(
+                            session, FQN_COR,
+                            sel_df[["ID","DESCRICAO","SINONIMO","PALAVRA_CHAVE"]],
+                        )
                     except Exception as e:
-                        st.warning(f"Falha ao sincronizar SINONIMO antes do reenvio: {e}")
-                    # <<< FIM >>>
+                        st.warning(f"Falha ao sincronizar SINONIMO/PALAVRA_CHAVE antes do reenvio: {e}")
                     resend_to_validacao(session, edited_cor, sel_ids, user)
                     st.rerun()
