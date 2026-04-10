@@ -427,9 +427,12 @@ if st.button("💾 Salvar alterações"):
 
         # 2.3: se qualquer dependência de SINONIMO mudou, recalcula
         if changed & deps_sinonimo:
+            # quando ESPECIFICACAO foi limpa (desc_will_recompute=True e novo_desc=""),
+            # não deve usar a DESCRICAO antiga do banco como fallback
+            desc_para_sinonimo = novo_desc if desc_will_recompute else (row_after.get("DESCRICAO") or "")
             sinonimo_novo = gerar_sinonimo(
                 row_after.get("ITEM"),
-                novo_desc or row_after.get("DESCRICAO") or "",
+                desc_para_sinonimo,
                 row_after.get("MARCA"),
                 row_after.get("QTD_MED"),
                 row_after.get("UN_MED"),
