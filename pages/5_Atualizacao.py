@@ -67,90 +67,164 @@ def apply_dropdown_to_mask(
         return mask & s_norm.isna()
     return mask & (s_norm == selected)
 
+
+FILTER_KEYS_UPD = [
+    "upd_f_id",
+    "upd_sel_user",
+    "upd_sel_insumo_dd",
+    "upd_sel_codigo_dd",
+    "upd_f_palavra",
+    "upd_sel_grupo_dd",
+    "upd_sel_categoria_dd",
+    "upd_sel_segmento_dd",
+    "upd_sel_familia_dd",
+    "upd_sel_subfamilia_dd",
+    "editor_atualizacao",  # opcional, mas recomendado para “zerar” o data_editor
+]
+
+def reset_filters_upd():
+    for k in FILTER_KEYS_UPD:
+        st.session_state.pop(k, None)
+    st.rerun()
+    
+def _series_and_opts(df_in: pd.DataFrame, col: str, *, drop_dot_zero: bool = False):
+    if col in df_in.columns:
+        s = norm_str_series(df_in[col], drop_dot_zero=drop_dot_zero)
+    else:
+        s = pd.Series(pd.NA, index=df_in.index, dtype="string")
+    return s, dropdown_options(s)
+
+def _apply_selected(df_in: pd.DataFrame, s_norm: pd.Series, selected: str) -> pd.DataFrame:
+    if selected == ALL_LABEL:
+        return df_in
+    if selected == NULL_LABEL:
+        return df_in[s_norm.isna()]
+    return df_in[s_norm == selected]
+
+def _selectbox_with_reset(label: str, options: list[str], key: str) -> str:
+    cur = st.session_state.get(key, ALL_LABEL)
+    if cur not in options:
+        st.session_state[key] = ALL_LABEL
+        cur = ALL_LABEL
+    return st.selectbox(label, options, index=options.index(cur), key=key)
+
 user_map = load_user_display_map(session)
 
 st.subheader("Filtros")
-
-# Séries normalizadas (para opções e comparação)
+if st.button("🧹 Limpar filtros", key="upd_btn_clear"):
+    reset_filters_upd()
+   
+# Séries normalizadas (para opções e comparação) — DF completo
 s_insumo = norm_str_series(df["INSUMO"]) if "INSUMO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
 s_codigo = norm_str_series(df["CODIGO_PRODUTO"], drop_dot_zero=True) if "CODIGO_PRODUTO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
 
-s_grupo = norm_str_series(df["GRUPO"]) if "GRUPO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
-s_categoria = norm_str_series(df["CATEGORIA"]) if "CATEGORIA" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
-s_segmento = norm_str_series(df["SEGMENTO"]) if "SEGMENTO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
-s_familia = norm_str_series(df["FAMILIA"]) if "FAMILIA" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
-s_subfamilia = norm_str_series(df["SUBFAMILIA"]) if "SUBFAMILIA" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
-
-# Opções
 opt_insumo = dropdown_options(s_insumo)
 opt_codigo = dropdown_options(s_codigo)
 
-opt_grupo = dropdown_options(s_grupo)
-opt_categoria = dropdown_options(s_categoria)
-opt_segmento = dropdown_options(s_segmento)
-opt_familia = dropdown_options(s_familia)
-opt_subfamilia = dropdown_options(s_subfamilia)
-
-# Linha 1 (4 colunas)
-c1, c2, c3, c4 = st.columns(4)
-with c1:
+# =========================
+# Linha 1 (4 filtros)
+# ID | Usuário | Insumo | Código
+# =========================
+r1 = st.columns(4)
+with r1[0]:
+    sel_id = st.text_input("ID", key="upd_f_id")
+with r1[1]:
     sel_user = st.selectbox(
         "Usuário (cadastro)",
         build_user_options(df, user_map),
         index=0,
-        key="cat_sel_user"
+        key="upd_sel_user",
     )
-with c2:
+with r1[2]:
     sel_insumo = st.selectbox(
         "Insumo",
         opt_insumo,
         index=0,
-        key="cat_sel_insumo_dd"
+        key="upd_sel_insumo_dd",
     )
-with c3:
+with r1[3]:
     sel_codigo = st.selectbox(
         "Código do Produto (exato)",
         opt_codigo,
         index=0,
-        key="cat_sel_codigo_dd"
+        key="upd_sel_codigo_dd",
     )
-with c4:
-    f_palavra = st.text_input("Palavra-chave (contém)", key="cat_f_palavra")
 
-# Linha 2 (4 colunas)
-d1, d2, d3, d4 = st.columns(4)
-with d1:
-    sel_grupo = st.selectbox("Grupo", opt_grupo, index=0, key="cat_sel_grupo_dd")
-with d2:
-    sel_categoria = st.selectbox("Categoria", opt_categoria, index=0, key="cat_sel_categoria_dd")
-with d3:
-    sel_segmento = st.selectbox("Segmento", opt_segmento, index=0, key="cat_sel_segmento_dd")
-with d4:
-    sel_familia = st.selectbox("Família", opt_familia, index=0, key="cat_sel_familia_dd")
+# =========================
+# Linha 2 (4 filtros)
+# Palavra-chave | Grupo | Categoria | Segmento
+# =========================
+r2 = st.columns(4)
+with r2[0]:
+    f_palavra = st.text_input("Palavra-chave (contém)", key="upd_f_palavra")
 
-# Linha 3 (Subfamília)
-e1, e2, e3, e4 = st.columns(4)
-with e1:
-    sel_subfamilia = st.selectbox("Subfamília", opt_subfamilia, index=0, key="cat_sel_subfamilia_dd")
-
+# 1) mask base (usuário + palavra)
 mask = apply_common_filters(
     df,
     sel_user_name=sel_user,
-    f_insumo="",  
-    f_codigo="",   
-    f_palavra=f_palavra,  # mantém
+    f_insumo="",
+    f_codigo="",
+    f_palavra=f_palavra,
     user_map=user_map,
 )
+
+# 2) aplica Insumo/Código exatos no mask (alinhado ao DF completo)
+mask = apply_dropdown_to_mask(mask, s_insumo, sel_insumo)
+mask = apply_dropdown_to_mask(mask, s_codigo, sel_codigo)
+
+# 3) aplica filtro de ID (exato)
+sel_id_norm = (sel_id or "").strip()
+if sel_id_norm:
+    if "ID" in df.columns and sel_id_norm.isdigit():
+        mask = mask & (df["ID"].astype("Int64") == int(sel_id_norm))
+    else:
+        st.warning("ID inválido. Use um número inteiro.")
+        mask = mask & False
+
+# 4) escopo inicial para cascata
+df_scope = df[mask].copy()
+
+with r2[1]:
+    s_grupo_sc, opt_grupo_sc = _series_and_opts(df_scope, "GRUPO")
+    sel_grupo = _selectbox_with_reset("Grupo", opt_grupo_sc, key="upd_sel_grupo_dd")
+    df_scope = _apply_selected(df_scope, s_grupo_sc, sel_grupo)
+
+with r2[2]:
+    s_cat_sc, opt_cat_sc = _series_and_opts(df_scope, "CATEGORIA")
+    sel_categoria = _selectbox_with_reset("Categoria", opt_cat_sc, key="upd_sel_categoria_dd")
+    df_scope = _apply_selected(df_scope, s_cat_sc, sel_categoria)
+
+with r2[3]:
+    s_seg_sc, opt_seg_sc = _series_and_opts(df_scope, "SEGMENTO")
+    sel_segmento = _selectbox_with_reset("Segmento", opt_seg_sc, key="upd_sel_segmento_dd")
+    df_scope = _apply_selected(df_scope, s_seg_sc, sel_segmento)
+
+# =========================
+# Linha 3 (máx 4 filtros)
+# Família | Subfamília | (vazio) | (vazio)
+# =========================
+r3 = st.columns(4)
+with r3[0]:
+    s_fam_sc, opt_fam_sc = _series_and_opts(df_scope, "FAMILIA")
+    sel_familia = _selectbox_with_reset("Família", opt_fam_sc, key="upd_sel_familia_dd")
+    df_scope = _apply_selected(df_scope, s_fam_sc, sel_familia)
+
+with r3[1]:
+    s_sub_sc, opt_sub_sc = _series_and_opts(df_scope, "SUBFAMILIA")
+    sel_subfamilia = _selectbox_with_reset("Subfamília", opt_sub_sc, key="upd_sel_subfamilia_dd")
+    df_scope = _apply_selected(df_scope, s_sub_sc, sel_subfamilia)
+
+with r3[2]:
+    st.empty()
+with r3[3]:
+    st.empty()
+
+# Resultado final já filtrado pela cascata
+df_view = df_scope
 
 # Aplica filtros dropdown (exatos)
 mask = apply_dropdown_to_mask(mask, s_insumo, sel_insumo)
 mask = apply_dropdown_to_mask(mask, s_codigo, sel_codigo)
-
-mask = apply_dropdown_to_mask(mask, s_grupo, sel_grupo)
-mask = apply_dropdown_to_mask(mask, s_categoria, sel_categoria)
-mask = apply_dropdown_to_mask(mask, s_segmento, sel_segmento)
-mask = apply_dropdown_to_mask(mask, s_familia, sel_familia)
-mask = apply_dropdown_to_mask(mask, s_subfamilia, sel_subfamilia)
 
 df_view = df[mask].copy()
 # -------- Ordem exigida --------
@@ -209,7 +283,55 @@ st.caption(f"Itens para validar no banco: **{len(df_view)}**")
 
 if st.button("Recarregar tabela"):
     st.rerun()
-     
+
+# ── Pré-processamento: recalcular DESCRICAO/SINONIMO/PALAVRA_CHAVE no estado do editor ──
+_DEPS_SINONIMO_ATU = {"ITEM","ESPECIFICACAO","MARCA","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
+_DEPS_PALAVRA_ATU  = {"SUBFAMILIA","ITEM","MARCA","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
+
+_editor_state_atu = st.session_state.get("editor_atualizacao", {})
+_edited_rows_atu  = _editor_state_atu.get("edited_rows", {})
+
+for _ri_str, _changes in list(_edited_rows_atu.items()):
+    _ri = int(_ri_str)
+    _changed = set(_changes.keys())
+    if not (_changed & (_DEPS_SINONIMO_ATU | _DEPS_PALAVRA_ATU)):
+        continue
+    if _ri >= len(df_view):
+        continue
+    _orig   = df_view.iloc[_ri].to_dict()
+    _merged = {**_orig, **_changes}
+    _row_edits = st.session_state["editor_atualizacao"]["edited_rows"][_ri_str]
+
+    if "ESPECIFICACAO" in _changed:
+        _desc_calc = extrair_valores(_merged.get("ESPECIFICACAO", "") or "")
+        _row_edits["DESCRICAO"] = _desc_calc
+        _merged["DESCRICAO"] = _desc_calc
+
+    if _changed & _DEPS_SINONIMO_ATU:
+        _desc_for_sin = _row_edits.get("DESCRICAO", _merged.get("DESCRICAO", ""))
+        _row_edits["SINONIMO"] = gerar_sinonimo(
+            _merged.get("ITEM"),
+            _desc_for_sin or "",
+            _merged.get("MARCA"),
+            _merged.get("QTD_MED"),
+            _merged.get("UN_MED"),
+            _merged.get("EMB_PRODUTO"),
+            _merged.get("QTD_EMB_COMERCIAL"),
+            _merged.get("EMB_COMERCIAL"),
+        )
+
+    if _changed & _DEPS_PALAVRA_ATU:
+        _row_edits["PALAVRA_CHAVE"] = gerar_palavra_chave(
+            _merged.get("SUBFAMILIA"),
+            _merged.get("ITEM"),
+            _merged.get("MARCA"),
+            _merged.get("EMB_PRODUTO"),
+            _merged.get("QTD_MED"),
+            _merged.get("UN_MED"),
+            _merged.get("FAMILIA"),
+        )
+# ── fim pré-processamento ──
+
 edited = st.data_editor(
     df_view,
     num_rows="fixed",
@@ -280,9 +402,20 @@ if st.button("💾 Salvar alterações"):
 
         row_after = edited_by_key.loc[key_val]
 
+        # DESCRICAO, SINONIMO e PALAVRA_CHAVE são recalculadas abaixo quando
+        # suas dependências mudam; excluí-las do loop evita coluna duplicada no SET.
+        desc_will_recompute     = bool(changed & deps_desc)
+        sinonimo_will_recompute = bool(changed & deps_sinonimo)
+        palavra_will_recompute  = bool(changed & deps_palavra)
         for c in cols_changed:
+            if c == "DESCRICAO"    and desc_will_recompute:
+                continue
+            if c == "SINONIMO"     and sinonimo_will_recompute:
+                continue
+            if c == "PALAVRA_CHAVE" and palavra_will_recompute:
+                continue
             set_parts.append(f'{c} = {sql_escape(edited_by_key.loc[key_val, c])}')
-        if changed & deps_desc:
+        if desc_will_recompute:
             novo_desc = extrair_valores(row_after.get("ESPECIFICACAO", ""))
             set_parts.append(f"DESCRICAO = {sql_escape(novo_desc)}")
             changed.add("DESCRICAO")
