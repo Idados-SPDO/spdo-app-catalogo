@@ -10,7 +10,7 @@ st.title("📝 Tabelas")
 session = get_session()
 
 cols = ["GRUPO", "CATEGORIA", "SEGMENTO", "FAMILIA", "SUBFAMILIA", "TIPO_CODIGO",
-        "MARCA", "EMB_PRODUTO", "UN_MED", "EMB_COMERCIAL"]
+        "MARCA", "FABRICANTE", "EMB_PRODUTO", "UN_MED", "EMB_COMERCIAL"]
 
 tbs = [f'BASES_SPDO.DB_APP_CATALOGO.TB_CATALOGO_{c.upper()}_H' for c in cols]
 

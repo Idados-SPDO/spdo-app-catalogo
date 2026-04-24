@@ -13,7 +13,7 @@ from src.variables import FQN_APR
 ORDER_CATALOGO = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
-    "MARCA","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
+    "MARCA","FABRICANTE","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","REFERENCIA",
     "DATA_CADASTRO","USUARIO_CADASTRO",
     "DATA_APROVACAO","USUARIO_APROVACAO",        # novos
@@ -108,7 +108,7 @@ USER_COLS_SPEC = [
     ("Categoria",          "CATEGORIA"),
     ("Descrição",          "SINONIMO"),
     ("Marca",              "MARCA"),
-    ("Fabricante",         "MARCA"),        # duplicado propositalmente
+    ("Fabricante",         "FABRICANTE"),
     ("Quantidade",         "QTD_MED"),
     ("Unidade de Medida",  "UN_MED"),
     ("Embalagem",          "EMB_PRODUTO"),

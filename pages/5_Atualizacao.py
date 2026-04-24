@@ -231,10 +231,10 @@ df_view = df[mask].copy()
 ORDER_ATUALIZACAO = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
-    "MARCA","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
+    "MARCA","FABRICANTE","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","REFERENCIA",
     "DATA_CADASTRO","USUARIO_CADASTRO",
-    "DATA_APROVACAO","USUARIO_APROVACAO",  
+    "DATA_APROVACAO","USUARIO_APROVACAO",
     "DATA_ATUALIZACAO","USUARIO_ATUALIZACAO",
 ]
 def reorder(df_in: pd.DataFrame, wanted: list[str]) -> pd.DataFrame:
@@ -283,7 +283,57 @@ st.caption(f"Itens para validar no banco: **{len(df_view)}**")
 
 if st.button("Recarregar tabela"):
     st.rerun()
-     
+
+# ── Pré-processamento: recalcular DESCRICAO/SINONIMO/PALAVRA_CHAVE no estado do editor ──
+_DEPS_SINONIMO_ATU = {"ITEM","ESPECIFICACAO","MARCA","FABRICANTE","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
+_DEPS_PALAVRA_ATU  = {"SUBFAMILIA","ITEM","MARCA","FABRICANTE","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
+
+_editor_state_atu = st.session_state.get("editor_atualizacao", {})
+_edited_rows_atu  = _editor_state_atu.get("edited_rows", {})
+
+for _ri_str, _changes in list(_edited_rows_atu.items()):
+    _ri = int(_ri_str)
+    _changed = set(_changes.keys())
+    if not (_changed & (_DEPS_SINONIMO_ATU | _DEPS_PALAVRA_ATU)):
+        continue
+    if _ri >= len(df_view):
+        continue
+    _orig   = df_view.iloc[_ri].to_dict()
+    _merged = {**_orig, **_changes}
+    _row_edits = st.session_state["editor_atualizacao"]["edited_rows"][_ri_str]
+
+    if "ESPECIFICACAO" in _changed:
+        _desc_calc = extrair_valores(_merged.get("ESPECIFICACAO", "") or "")
+        _row_edits["DESCRICAO"] = _desc_calc
+        _merged["DESCRICAO"] = _desc_calc
+
+    if _changed & _DEPS_SINONIMO_ATU:
+        _desc_for_sin = _row_edits.get("DESCRICAO", _merged.get("DESCRICAO", ""))
+        _row_edits["SINONIMO"] = gerar_sinonimo(
+            _merged.get("ITEM"),
+            _desc_for_sin or "",
+            _merged.get("MARCA"),
+            _merged.get("FABRICANTE"),
+            _merged.get("QTD_MED"),
+            _merged.get("UN_MED"),
+            _merged.get("EMB_PRODUTO"),
+            _merged.get("QTD_EMB_COMERCIAL"),
+            _merged.get("EMB_COMERCIAL"),
+        )
+
+    if _changed & _DEPS_PALAVRA_ATU:
+        _row_edits["PALAVRA_CHAVE"] = gerar_palavra_chave(
+            _merged.get("SUBFAMILIA"),
+            _merged.get("ITEM"),
+            _merged.get("MARCA"),
+            _merged.get("FABRICANTE"),
+            _merged.get("EMB_PRODUTO"),
+            _merged.get("QTD_MED"),
+            _merged.get("UN_MED"),
+            _merged.get("FAMILIA"),
+        )
+# ── fim pré-processamento ──
+
 edited = st.data_editor(
     df_view,
     num_rows="fixed",
@@ -346,17 +396,28 @@ if st.button("💾 Salvar alterações"):
         before = fetch_row_snapshot(session, FQN_APR, int(key_val)) if str(key_val).isdigit() else None
         
         deps_desc     = {"ESPECIFICACAO"}
-        deps_sinonimo = {"ITEM","ESPECIFICACAO","MARCA","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
-        deps_palavra  = {"SUBFAMILIA","ITEM","MARCA","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
+        deps_sinonimo = {"ITEM","ESPECIFICACAO","MARCA","FABRICANTE","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
+        deps_palavra  = {"SUBFAMILIA","ITEM","MARCA","FABRICANTE","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
 
         changed = set(cols_changed)
         set_parts = []
 
         row_after = edited_by_key.loc[key_val]
 
+        # DESCRICAO, SINONIMO e PALAVRA_CHAVE são recalculadas abaixo quando
+        # suas dependências mudam; excluí-las do loop evita coluna duplicada no SET.
+        desc_will_recompute     = bool(changed & deps_desc)
+        sinonimo_will_recompute = bool(changed & deps_sinonimo)
+        palavra_will_recompute  = bool(changed & deps_palavra)
         for c in cols_changed:
+            if c == "DESCRICAO"    and desc_will_recompute:
+                continue
+            if c == "SINONIMO"     and sinonimo_will_recompute:
+                continue
+            if c == "PALAVRA_CHAVE" and palavra_will_recompute:
+                continue
             set_parts.append(f'{c} = {sql_escape(edited_by_key.loc[key_val, c])}')
-        if changed & deps_desc:
+        if desc_will_recompute:
             novo_desc = extrair_valores(row_after.get("ESPECIFICACAO", ""))
             set_parts.append(f"DESCRICAO = {sql_escape(novo_desc)}")
             changed.add("DESCRICAO")
@@ -368,10 +429,14 @@ if st.button("💾 Salvar alterações"):
 
         # 2.3: se qualquer dependência de SINONIMO mudou, recalcula
         if changed & deps_sinonimo:
+            # quando ESPECIFICACAO foi limpa (desc_will_recompute=True e novo_desc=""),
+            # não deve usar a DESCRICAO antiga do banco como fallback
+            desc_para_sinonimo = novo_desc if desc_will_recompute else (row_after.get("DESCRICAO") or "")
             sinonimo_novo = gerar_sinonimo(
                 row_after.get("ITEM"),
-                novo_desc or row_after.get("DESCRICAO") or "",
+                desc_para_sinonimo,
                 row_after.get("MARCA"),
+                row_after.get("FABRICANTE"),
                 row_after.get("QTD_MED"),
                 row_after.get("UN_MED"),
                 row_after.get("EMB_PRODUTO"),
@@ -387,6 +452,7 @@ if st.button("💾 Salvar alterações"):
                 row_after.get("SUBFAMILIA"),
                 row_after.get("ITEM"),
                 row_after.get("MARCA"),
+                row_after.get("FABRICANTE"),
                 row_after.get("EMB_PRODUTO"),
                 row_after.get("QTD_MED"),
                 row_after.get("UN_MED"),

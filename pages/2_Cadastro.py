@@ -7,7 +7,7 @@ from io import BytesIO
 from src.auth import current_user, require_roles
 import numpy as np
 
-from src.variables import FQN_TBL_GRUPO, FQN_TBL_CATEGORIA, FQN_TBL_SEGMENTO, FQN_TBL_FAMILIA, FQN_TBL_SUBFAMILIA, FQN_TBL_TIPO_CODIGO,FQN_TBL_MARCA, FQN_TBL_EMB_PRODUTO , FQN_TBL_UN_MED , FQN_TBL_EMB_COMERCIAL
+from src.variables import FQN_TBL_GRUPO, FQN_TBL_CATEGORIA, FQN_TBL_SEGMENTO, FQN_TBL_FAMILIA, FQN_TBL_SUBFAMILIA, FQN_TBL_TIPO_CODIGO, FQN_TBL_MARCA, FQN_TBL_FABRICANTE, FQN_TBL_EMB_PRODUTO, FQN_TBL_UN_MED, FQN_TBL_EMB_COMERCIAL
 
 require_roles("OPERACIONAL", "ADMIN")
 
@@ -63,6 +63,7 @@ with tab_form:
 
         with c3:
             marca            = st.selectbox("MARCA",get_catalog_options(FQN_TBL_MARCA))
+            fabricante       = st.selectbox("FABRICANTE",get_catalog_options(FQN_TBL_FABRICANTE))
             emb_produto      = st.selectbox("EMB_PRODUTO",get_catalog_options(FQN_TBL_EMB_PRODUTO))
             un_med           = st.selectbox("UN_MED",get_catalog_options(FQN_TBL_UN_MED))
             qtd_med          = st.number_input("QTD_MED", min_value=0.00, step=0.01)
@@ -84,6 +85,7 @@ with tab_form:
                 "ITEM": item,
                 "ESPECIFICACAO": especificacao,
                 "MARCA": marca,
+                "FABRICANTE": fabricante,
                 "EMB_PRODUTO": emb_produto,
                 "UN_MED": un_med,
                 "QTD_MED": qtd_med,
@@ -115,14 +117,15 @@ with tab_form:
                     "DESCRICAO": descricao,
                     "ESPECIFICACAO": especificacao,
                     "MARCA": marca,
+                    "FABRICANTE": fabricante,
                     "EMB_PRODUTO": emb_produto,
                     "UN_MED": un_med,
                     "QTD_MED": float(qtd_med) if qtd_med is not None else None,
                     "EMB_COMERCIAL": emb_comercial,
                     "QTD_EMB_COMERCIAL": int(qtd_emb_comercial) if qtd_emb_comercial is not None else None,
                     "QTD_EMB_PRODUTO": int(qtd_emb_produto) if qtd_emb_produto is not None else None,
-                    "SINONIMO": gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb_comercial, emb_comercial),
-                    "PALAVRA_CHAVE": gerar_palavra_chave(subfamilia, item, marca, emb_produto, qtd_med, un_med, familia),
+                    "SINONIMO": gerar_sinonimo(item, descricao, marca, fabricante, qtd_med, un_med, emb_produto, qtd_emb_comercial, emb_comercial),
+                    "PALAVRA_CHAVE": gerar_palavra_chave(subfamilia, item, marca, fabricante, emb_produto, qtd_med, un_med, familia),
                 }
                 codigo_norm = (codigo_produto or "").strip()
                 exists, origem = codigo_produto_exists_any(session, codigo_norm)
@@ -142,7 +145,7 @@ with tab_form:
         EXPECTED = [
             "REFERENCIA","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
             "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","ESPECIFICACAO",
-            "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
+            "MARCA","FABRICANTE","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
         ]
         def gerar_template_excel_catalogo_com_dropdowns(session) -> bytes:
             options_map = {
@@ -153,6 +156,7 @@ with tab_form:
                 "SUBFAMILIA": get_catalog_options(FQN_TBL_SUBFAMILIA),
                 "TIPO_CODIGO": get_catalog_options(FQN_TBL_TIPO_CODIGO),
                 "MARCA": get_catalog_options(FQN_TBL_MARCA),
+                "FABRICANTE": get_catalog_options(FQN_TBL_FABRICANTE),
                 "EMB_PRODUTO": get_catalog_options(FQN_TBL_EMB_PRODUTO),
                 "UN_MED": get_catalog_options(FQN_TBL_UN_MED),
                 "EMB_COMERCIAL": get_catalog_options(FQN_TBL_EMB_COMERCIAL),
@@ -229,7 +233,7 @@ with tab_excel:
         EXPECTED = [
             "REFERENCIA","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
             "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","ESPECIFICACAO",
-            "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
+            "MARCA","FABRICANTE","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
         ]
         
         for c in EXPECTED:
@@ -255,7 +259,7 @@ with tab_excel:
         REQUIRED = [
             "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
             "TIPO_CODIGO","CODIGO_PRODUTO","ITEM","ESPECIFICACAO",
-            "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
+            "MARCA","FABRICANTE","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
         ]
 
         df_out["CODIGO_PRODUTO"] = df_out["CODIGO_PRODUTO"].astype(str).str.strip()
@@ -295,6 +299,7 @@ with tab_excel:
             "SUBFAMILIA": get_catalog_options(FQN_TBL_SUBFAMILIA),
             "TIPO_CODIGO": get_catalog_options(FQN_TBL_TIPO_CODIGO),
             "MARCA": get_catalog_options(FQN_TBL_MARCA),
+            "FABRICANTE": get_catalog_options(FQN_TBL_FABRICANTE),
             "EMB_PRODUTO": get_catalog_options(FQN_TBL_EMB_PRODUTO),
             "UN_MED": get_catalog_options(FQN_TBL_UN_MED),
             "EMB_COMERCIAL": get_catalog_options(FQN_TBL_EMB_COMERCIAL),
@@ -391,6 +396,7 @@ with tab_excel:
                     "DESCRICAO": extrair_valores(row["ESPECIFICACAO"]),
                     "ESPECIFICACAO": row["ESPECIFICACAO"],
                     "MARCA": row["MARCA"],
+                    "FABRICANTE": row["FABRICANTE"],
                     "EMB_PRODUTO": row["EMB_PRODUTO"],
                     "UN_MED": row["UN_MED"],
                     "QTD_MED": to_float_ok(row["QTD_MED"]),
@@ -401,6 +407,7 @@ with tab_excel:
                         row["ITEM"],
                         extrair_valores(row["ESPECIFICACAO"]),
                         row["MARCA"],
+                        row["FABRICANTE"],
                         to_float_ok(row["QTD_MED"]),
                         row["UN_MED"],
                         row["EMB_PRODUTO"],
@@ -411,6 +418,7 @@ with tab_excel:
                         row["SUBFAMILIA"],
                         row["ITEM"],
                         row["MARCA"],
+                        row["FABRICANTE"],
                         row["EMB_PRODUTO"],
                         to_float_ok(row["QTD_MED"]),
                         row["UN_MED"],

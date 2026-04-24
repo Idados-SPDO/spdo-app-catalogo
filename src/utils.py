@@ -136,16 +136,17 @@ def pluralize_pt(noun: str, qty: Any) -> str:
         return _case_like(original, low + "s")
     return _case_like(original, low + "s")
 
-def gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb_comercial, emb_comercial):
+def gerar_sinonimo(item, descricao, marca, fabricante, qtd_med, un_med, emb_produto, qtd_emb_comercial, emb_comercial):
     item        = wipe_dashes(item)
     descricao   = wipe_dashes(descricao)
-    marca       = "" if is_dash_placeholder(marca) else wipe_dashes(marca)
+    marca       = "" if is_dash_placeholder(marca)      else wipe_dashes(marca)
+    fabricante  = "" if is_dash_placeholder(fabricante) else wipe_dashes(fabricante)
     emb_produto = "" if is_dash_placeholder(emb_produto) else wipe_dashes(emb_produto)
     emb_comercial = wipe_dashes(emb_comercial)
 
     qtd_un = safe_qtd_un(qtd_med, un_med)
 
-    partes = [p for p in [item, descricao, marca, qtd_un] if p]
+    partes = [p for p in [item, descricao, marca, fabricante, qtd_un] if p]
     sinonimo = " ".join(partes).strip()
 
     if emb_produto:
@@ -161,9 +162,10 @@ def gerar_sinonimo(item, descricao, marca, qtd_med, un_med, emb_produto, qtd_emb
 
     return wipe_dashes(sinonimo)
 
-def gerar_palavra_chave(subfamilia, item, marca, emb_produto, qtd_med, un_med, familia=None):
-    # regra 1: MARCA vazia ou apenas hífen -> omite
-    marca_clean = "" if is_dash_placeholder(marca) else wipe_dashes(marca)
+def gerar_palavra_chave(subfamilia, item, marca, fabricante, emb_produto, qtd_med, un_med, familia=None):
+    # regra 1: MARCA/FABRICANTE vazios ou apenas hífen -> omite
+    marca_clean      = "" if is_dash_placeholder(marca)      else wipe_dashes(marca)
+    fabricante_clean = "" if is_dash_placeholder(fabricante) else wipe_dashes(fabricante)
 
     # regra 2: SUBFAMILIA vazia ou hífen -> usa FAMILIA
     base_subfam = "" if is_dash_placeholder(subfamilia) else wipe_dashes(subfamilia)
@@ -174,7 +176,7 @@ def gerar_palavra_chave(subfamilia, item, marca, emb_produto, qtd_med, un_med, f
     emb_produto_clean = "" if is_dash_placeholder(emb_produto) else wipe_dashes(emb_produto)
     qtd_un            = safe_qtd_un(qtd_med, un_med)
 
-    partes = [base_subfam, item_clean, marca_clean, emb_produto_clean]
+    partes = [base_subfam, item_clean, marca_clean, fabricante_clean, emb_produto_clean]
     out = safe_join_comma(partes)
     if qtd_un:
         out = (out + ", " + qtd_un) if out else qtd_un
@@ -218,7 +220,7 @@ def _to_int_safe(x):
 COLS_TEMPLATE = [
     "REFERENCIA","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","ESPECIFICACAO",
-    "MARCA","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
+    "MARCA","FABRICANTE","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL",
 ]
 
 def gerar_template_excel_catalogo() -> bytes:
@@ -237,7 +239,7 @@ def gerar_template_excel_catalogo() -> bytes:
             "OBS": [
                 "Opcional", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório",
                 "Obrigatório", "Obrigatório", "Opcional", "Obrigatório", "Obrigatório",
-                "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório",
+                "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório",
             ]
         })
         dicas.to_excel(writer, index=False, sheet_name="DICAS")
@@ -247,7 +249,7 @@ BASE_ORDER_CATALOGO: list[str] = [
     "ID",
     "CODIGO_PRODUTO", "TIPO_CODIGO",
     "GRUPO", "CATEGORIA", "SEGMENTO", "FAMILIA", "SUBFAMILIA",
-    "ITEM", "MARCA",
+    "ITEM", "MARCA", "FABRICANTE",
     "EMB_PRODUTO", "UN_MED", "QTD_MED", "EMB_COMERCIAL", "QTD_EMB_COMERCIAL",
     "PALAVRA_CHAVE", "SINONIMO", "DESCRICAO", "ESPECIFICACAO",
     "REFERENCIA",
@@ -261,6 +263,7 @@ BASE_ORDER_ATUALIZACAO: list[str] = [
     "GRUPO", "CATEGORIA", "SEGMENTO", "FAMILIA", "SUBFAMILIA",
     "INSUMO", "ITEM",
     "CODIGO_PRODUTO", "TIPO_CODIGO",
+    "MARCA", "FABRICANTE",
     "EMB_PRODUTO", "UN_MED", "QTD_MED", "EMB_COMERCIAL", "QTD_EMB_COMERCIAL",
     "DESCRICAO", "ESPECIFICACAO",
     "PALAVRA_CHAVE", "SINONIMO",
