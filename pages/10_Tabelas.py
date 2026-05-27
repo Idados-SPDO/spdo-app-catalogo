@@ -12,7 +12,7 @@ session = get_session()
 cols = ["GRUPO", "CATEGORIA", "SEGMENTO", "FAMILIA", "SUBFAMILIA", "TIPO_CODIGO",
         "MARCA", "FABRICANTE", "EMB_PRODUTO", "UN_MED", "EMB_COMERCIAL"]
 
-tbs = [f'BASES_SPDO.DB_GESTAO_DADOS_EXTERNOS_APP_CATALOGO.TBL_CATALOGO_{c.upper()}_H' for c in cols]
+tbs = [f'BASES_SPDO.DB_PRODUCAO_GESTAO_DADOS_EXTERNOS_APP_CATALOGO.TBL_CATALOGO_{c.upper()}_H' for c in cols]
 
 
 def user_has_role(u: dict, role: str) -> bool:
