@@ -15,7 +15,7 @@ session = get_session()
 ORDER_CORRECOES = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
-    "MARCA","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
+    "MARCA","FABRICANTE","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","REFERENCIA",
     "DATA_CADASTRO","USUARIO_CADASTRO",
     "DATA_REPROVACAO","USUARIO_REPROVACAO",      # novos
@@ -25,7 +25,7 @@ ORDER_CORRECOES = [
 
 EDITABLE_COR_COLS = [
     "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA","TIPO_CODIGO","CODIGO_PRODUTO",
-    "INSUMO","ITEM","DESCRICAO","ESPECIFICACAO","QTD_EMB_PRODUTO", "EMB_PRODUTO", 
+    "INSUMO","ITEM","DESCRICAO","ESPECIFICACAO","MARCA","FABRICANTE","QTD_EMB_PRODUTO", "EMB_PRODUTO",
     "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL"
     ,"SINONIMO","PALAVRA_CHAVE","REFERENCIA"
 ]
@@ -77,14 +77,8 @@ def _sql_escape(val):
     return "'" + str(val).replace("'", "''") + "'"
 
 def _build_desc(row_after) -> str:
-    """
-    Recria DESCRICAO a partir de ESPECIFICACAO, seguindo 5_Atualizacao.
-    - Se DESCRICAO está vazio/nulo, tenta extrair de ESPECIFICACAO
-    """
-    desc = row_after.get("DESCRICAO")
-    if (desc is None or str(desc).strip() == "") and "ESPECIFICACAO" in row_after:
-        return extrair_valores(row_after.get("ESPECIFICACAO", "") or "")
-    return desc if desc is not None else ""
+    """Recalcula DESCRICAO sempre a partir de ESPECIFICACAO."""
+    return extrair_valores(row_after.get("ESPECIFICACAO", "") or "")
 
 def _build_sinonimo_like_update(row_after) -> str:
     """
@@ -95,6 +89,7 @@ def _build_sinonimo_like_update(row_after) -> str:
         row_after.get("ITEM"),
         desc or row_after.get("DESCRICAO") or "",
         row_after.get("MARCA"),
+        row_after.get("FABRICANTE"),
         row_after.get("QTD_MED"),
         row_after.get("UN_MED"),
         row_after.get("EMB_PRODUTO"),
@@ -120,9 +115,7 @@ def _recalc_sinonimo_df_inplace(df: pd.DataFrame) -> pd.DataFrame:
         return novo_desc, _build_sinonimo_like_update(row_after)
 
     out = df.apply(lambda r: pd.Series(_calc(r), index=["__DESC_NEW__", "__SIN_NEW__"]), axis=1)
-    # aplica descrição nova apenas se a atual estiver vazia/nula (mesmo critério do helper)
-    mask_apply_desc = df["DESCRICAO"].astype(str).str.strip().eq("") | df["DESCRICAO"].isna()
-    df.loc[mask_apply_desc, "DESCRICAO"] = out["__DESC_NEW__"]
+    df["DESCRICAO"] = out["__DESC_NEW__"]
     df["SINONIMO"] = out["__SIN_NEW__"]
     return df
 
@@ -131,7 +124,7 @@ def _recalc_palavra_chave_df_inplace(df: pd.DataFrame) -> pd.DataFrame:
         df["PALAVRA_CHAVE"] = ""
     df["PALAVRA_CHAVE"] = df.apply(lambda r: gerar_palavra_chave(
         r.get("SUBFAMILIA"), r.get("ITEM"), r.get("MARCA"),
-        r.get("EMB_PRODUTO"), r.get("QTD_MED"), r.get("UN_MED"),
+        r.get("FABRICANTE"), r.get("EMB_PRODUTO"), r.get("QTD_MED"), r.get("UN_MED"),
         r.get("FAMILIA"),
     ), axis=1)
     return df
@@ -524,8 +517,8 @@ else:
             # Injeta os valores recalculados antes do st.data_editor para que apareçam
             # na mesma renderização em que o usuário editou um campo dependente.
             _EDITOR_KEY   = "editor_correcao_page"
-            _DEPS_SINONIMO = {"ITEM","ESPECIFICACAO","MARCA","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
-            _DEPS_PALAVRA  = {"SUBFAMILIA","ITEM","MARCA","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
+            _DEPS_SINONIMO = {"ITEM","ESPECIFICACAO","MARCA","FABRICANTE","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
+            _DEPS_PALAVRA  = {"SUBFAMILIA","ITEM","MARCA","FABRICANTE","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
 
             _editor_state = st.session_state.get(_EDITOR_KEY, {})
             _edited_rows  = _editor_state.get("edited_rows", {})
@@ -543,10 +536,14 @@ else:
 
                 if _changed & _DEPS_SINONIMO:
                     _desc_calc = _build_desc(_merged)
+                    if "ESPECIFICACAO" in _changed:
+                        _row_edits["DESCRICAO"] = _desc_calc
+                        _merged["DESCRICAO"] = _desc_calc
                     _row_edits["SINONIMO"] = gerar_sinonimo(
                         _merged.get("ITEM"),
                         _desc_calc or _merged.get("DESCRICAO", ""),
                         _merged.get("MARCA"),
+                        _merged.get("FABRICANTE"),
                         _merged.get("QTD_MED"),
                         _merged.get("UN_MED"),
                         _merged.get("EMB_PRODUTO"),
@@ -559,6 +556,7 @@ else:
                         _merged.get("SUBFAMILIA"),
                         _merged.get("ITEM"),
                         _merged.get("MARCA"),
+                        _merged.get("FABRICANTE"),
                         _merged.get("EMB_PRODUTO"),
                         _merged.get("QTD_MED"),
                         _merged.get("UN_MED"),
