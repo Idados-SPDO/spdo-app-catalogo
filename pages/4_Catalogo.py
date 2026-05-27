@@ -13,7 +13,7 @@ from src.variables import FQN_APR
 ORDER_CATALOGO = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
-    "MARCA","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
+    "MARCA","FABRICANTE","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","REFERENCIA",
     "DATA_CADASTRO","USUARIO_CADASTRO",
     "DATA_APROVACAO","USUARIO_APROVACAO",        # novos
@@ -108,7 +108,7 @@ USER_COLS_SPEC = [
     ("Categoria",          "CATEGORIA"),
     ("Descrição",          "SINONIMO"),
     ("Marca",              "MARCA"),
-    ("Fabricante",         "MARCA"),        # duplicado propositalmente
+    ("Fabricante",         "FABRICANTE"),
     ("Quantidade",         "QTD_MED"),
     ("Unidade de Medida",  "UN_MED"),
     ("Embalagem",          "EMB_PRODUTO"),
@@ -134,6 +134,30 @@ def build_user_view(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     return out
+
+
+KEY_SELECTED = "cat_selected_keys"
+KEY_EDITOR = "cat_table_editor"
+KEY_SELECT_ALL = "cat_select_all_visible"
+KEY_VISIBLE_KEYS = "cat_visible_row_keys"
+
+FILTER_KEYS = [
+    "cat_f_id",
+    "cat_sel_user",
+    "cat_sel_insumo_dd",
+    "cat_sel_codigo_dd",
+    "cat_f_palavra",
+    "cat_sel_grupo_dd",
+    "cat_sel_categoria_dd",
+    "cat_sel_segmento_dd",
+    "cat_sel_familia_dd",
+    "cat_sel_subfamilia_dd",
+]
+
+def reset_catalogo_page_state():
+    for k in FILTER_KEYS + [KEY_SELECTED, KEY_EDITOR, KEY_SELECT_ALL, KEY_VISIBLE_KEYS]:
+        st.session_state.pop(k, None)
+    st.rerun()
 
 def df_to_xlsx_bytes(df: pd.DataFrame, sheet_name: str = "catalogo") -> bytes:
     df_x = df.copy()
@@ -170,6 +194,9 @@ user_map = load_user_display_map(session)
 
 st.subheader("Filtros")
 
+if st.button("🧹 Limpar filtros", key="cat_btn_limpar_filtros"):
+    reset_catalogo_page_state()
+
 # Séries normalizadas (para opções e comparação)
 s_insumo = norm_str_series(df["INSUMO"]) if "INSUMO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
 s_codigo = norm_str_series(df["CODIGO_PRODUTO"], drop_dot_zero=True) if "CODIGO_PRODUTO" in df.columns else pd.Series(pd.NA, index=df.index, dtype="string")
@@ -190,34 +217,44 @@ opt_segmento = dropdown_options(s_segmento)
 opt_familia = dropdown_options(s_familia)
 opt_subfamilia = dropdown_options(s_subfamilia)
 
+# =========================
 # Linha 1 (4 colunas)
-c1, c2, c3, c4 = st.columns(4)
-with c1:
+# ID | Usuário | Insumo | Código
+# =========================
+r1 = st.columns(4)
+with r1[0]:
+    sel_id = st.text_input("ID", key="cat_f_id")
+with r1[1]:
     sel_user = st.selectbox(
         "Usuário (cadastro)",
         build_user_options(df, user_map),
         index=0,
         key="cat_sel_user"
     )
-with c2:
+with r1[2]:
     sel_insumo = st.selectbox(
         "Insumo",
         opt_insumo,
         index=0,
         key="cat_sel_insumo_dd"
     )
-    pass
-with c3:
+with r1[3]:
     sel_codigo = st.selectbox(
         "Código do Produto (exato)",
         opt_codigo,
         index=0,
         key="cat_sel_codigo_dd"
     )
-    pass
-with c4:
+
+# =========================
+# Linha 2 (4 colunas)
+# Palavra-chave | Grupo | Categoria | Segmento
+# =========================
+r2 = st.columns(4)
+with r2[0]:
     f_palavra = st.text_input("Palavra-chave (contém)", key="cat_f_palavra")
 
+# mask base (usuário + palavra)
 mask = apply_common_filters(
     df,
     sel_user_name=sel_user,
@@ -226,8 +263,24 @@ mask = apply_common_filters(
     f_palavra=f_palavra,
     user_map=user_map,
 )
+
+# aplica Insumo/Código (exatos) no mask base
+mask = apply_dropdown_to_mask(mask, s_insumo, sel_insumo)
+mask = apply_dropdown_to_mask(mask, s_codigo, sel_codigo)
+
+# aplica ID (exato) no mask base
+sel_id_norm = (sel_id or "").strip()
+if sel_id_norm:
+    if "ID" in df.columns and sel_id_norm.isdigit():
+        mask = mask & (df["ID"].astype("Int64") == int(sel_id_norm))
+    else:
+        st.warning("ID inválido. Use um número inteiro.")
+        mask = mask & False
+
+# escopo inicial para cascata
 df_scope = df[mask].copy()
 
+# helpers da cascata (mantém os seus)
 def _series_and_opts(df_in: pd.DataFrame, col: str, *, drop_dot_zero: bool = False):
     if col in df_in.columns:
         s = norm_str_series(df_in[col], drop_dot_zero=drop_dot_zero)
@@ -249,57 +302,162 @@ def _selectbox_with_reset(label: str, options: list[str], key: str) -> str:
         cur = ALL_LABEL
     return st.selectbox(label, options, index=options.index(cur), key=key)
 
-# Linha 2 (4 colunas)
-d1, d2, d3, d4 = st.columns(4)
+with r2[1]:
+    s_grupo_sc, opt_grupo_sc = _series_and_opts(df_scope, "GRUPO")
+    sel_grupo = _selectbox_with_reset("Grupo", opt_grupo_sc, key="cat_sel_grupo_dd")
+    df_scope = _apply_selected(df_scope, s_grupo_sc, sel_grupo)
 
-with d1:
-    s_grupo, opt_grupo = _series_and_opts(df_scope, "GRUPO")
-    sel_grupo = _selectbox_with_reset("Grupo", opt_grupo, key="cat_sel_grupo_dd")
-    df_scope = _apply_selected(df_scope, s_grupo, sel_grupo)
+with r2[2]:
+    s_cat_sc, opt_cat_sc = _series_and_opts(df_scope, "CATEGORIA")
+    sel_categoria = _selectbox_with_reset("Categoria", opt_cat_sc, key="cat_sel_categoria_dd")
+    df_scope = _apply_selected(df_scope, s_cat_sc, sel_categoria)
 
-with d2:
-    s_categoria, opt_categoria = _series_and_opts(df_scope, "CATEGORIA")
-    sel_categoria = _selectbox_with_reset("Categoria", opt_categoria, key="cat_sel_categoria_dd")
-    df_scope = _apply_selected(df_scope, s_categoria, sel_categoria)
+with r2[3]:
+    s_seg_sc, opt_seg_sc = _series_and_opts(df_scope, "SEGMENTO")
+    sel_segmento = _selectbox_with_reset("Segmento", opt_seg_sc, key="cat_sel_segmento_dd")
+    df_scope = _apply_selected(df_scope, s_seg_sc, sel_segmento)
 
-with d3:
-    s_segmento, opt_segmento = _series_and_opts(df_scope, "SEGMENTO")
-    sel_segmento = _selectbox_with_reset("Segmento", opt_segmento, key="cat_sel_segmento_dd")
-    df_scope = _apply_selected(df_scope, s_segmento, sel_segmento)
+# =========================
+# Linha 3 (4 colunas)
+# Família | Subfamília | (vazio) | (vazio)
+# =========================
+r3 = st.columns(4)
+with r3[0]:
+    s_fam_sc, opt_fam_sc = _series_and_opts(df_scope, "FAMILIA")
+    sel_familia = _selectbox_with_reset("Família", opt_fam_sc, key="cat_sel_familia_dd")
+    df_scope = _apply_selected(df_scope, s_fam_sc, sel_familia)
 
-with d4:
-    s_familia, opt_familia = _series_and_opts(df_scope, "FAMILIA")
-    sel_familia = _selectbox_with_reset("Família", opt_familia, key="cat_sel_familia_dd")
-    df_scope = _apply_selected(df_scope, s_familia, sel_familia)
+with r3[1]:
+    s_sub_sc, opt_sub_sc = _series_and_opts(df_scope, "SUBFAMILIA")
+    sel_subfamilia = _selectbox_with_reset("Subfamília", opt_sub_sc, key="cat_sel_subfamilia_dd")
+    df_scope = _apply_selected(df_scope, s_sub_sc, sel_subfamilia)
 
-# Linha 3 (Subfamília)
-e1, e2, e3, e4 = st.columns(4)
+with r3[2]:
+    st.empty()
+with r3[3]:
+    st.empty()
 
-with e1:
-    s_subfamilia, opt_subfamilia = _series_and_opts(df_scope, "SUBFAMILIA")
-    sel_subfamilia = _selectbox_with_reset("Subfamília", opt_subfamilia, key="cat_sel_subfamilia_dd")
-    df_scope = _apply_selected(df_scope, s_subfamilia, sel_subfamilia)
-
-# Aplica filtros dropdown (exatos)
-mask = apply_dropdown_to_mask(mask, s_insumo, sel_insumo)
-mask = apply_dropdown_to_mask(mask, s_codigo, sel_codigo)
-
-mask = apply_dropdown_to_mask(mask, s_grupo, sel_grupo)
-mask = apply_dropdown_to_mask(mask, s_categoria, sel_categoria)
-mask = apply_dropdown_to_mask(mask, s_segmento, sel_segmento)
-mask = apply_dropdown_to_mask(mask, s_familia, sel_familia)
-mask = apply_dropdown_to_mask(mask, s_subfamilia, sel_subfamilia)
-
-df_filtrado = df[mask].copy()
-
+# ✅ Resultado final (já com cascata + filtros globais + ID)
+df_filtrado = df_scope
 # ===== Tabela =====
 st.caption(f"Itens no catalogo: **{len(df_filtrado)}**")
-if st.button("Recarregar tabela"):
-    st.rerun()
 
-if is_user_role:
-    df_display = build_user_view(df_filtrado).reset_index(drop=True)
-    st.dataframe(df_display, hide_index=True, use_container_width=True)
+# Inicializa seleção em memória
+if KEY_SELECTED not in st.session_state:
+    st.session_state[KEY_SELECTED] = set()
+elif not isinstance(st.session_state[KEY_SELECTED], set):
+    st.session_state[KEY_SELECTED] = set(st.session_state[KEY_SELECTED] or [])
+
+selected_set = set(st.session_state[KEY_SELECTED])
+
+# Chave única por linha
+if "ID" in df_filtrado.columns:
+    base_id = df_filtrado["ID"].astype("string").fillna("")
 else:
-    df_display = df_filtrado.copy()
-    st.dataframe(df_display, hide_index=True, use_container_width=True, column_config=dt_cfg)
+    base_id = df_filtrado.index.astype("string")
+
+row_key = (base_id + "|" + df_filtrado.index.astype(str)).astype("string")
+current_keys = set(row_key.tolist())
+
+# Guarda as chaves visíveis para o callback do toggle
+st.session_state[KEY_VISIBLE_KEYS] = row_key.tolist()
+
+def _toggle_all_visible():
+    keys = set(st.session_state.get(KEY_VISIBLE_KEYS, []))
+    sel = st.session_state.get(KEY_SELECTED, set())
+    if not isinstance(sel, set):
+        sel = set(sel or [])
+    if st.session_state.get(KEY_SELECT_ALL, False):
+        st.session_state[KEY_SELECTED] = sel | keys
+    else:
+        st.session_state[KEY_SELECTED] = sel - keys
+
+# Barra acima da tabela (placeholder para o toggle)
+b1, b2, b3 = st.columns([1.3, 2.5, 6])
+with b1:
+    if st.button("Recarregar tabela", key="cat_btn_reload"):
+        st.rerun()
+with b2:
+    toggle_ph = st.empty()
+
+# Monta DF exibido (USER vs demais)
+if is_user_role:
+    df_view = build_user_view(df_filtrado)
+    col_cfg = {
+        "Selecionada": st.column_config.CheckboxColumn("Selecionada", help="Marque para incluir no download.")
+    }
+else:
+    df_view = df_filtrado.copy()
+    col_cfg = {
+        "Selecionada": st.column_config.CheckboxColumn("Selecionada", help="Marque para incluir no download.")
+    }
+    col_cfg.update(dt_cfg)
+
+# Sempre cria a coluna Selecionada no índice 0
+df_editor = df_view.copy()
+df_editor.insert(
+    0,
+    "Selecionada",
+    row_key.isin(pd.Series(list(selected_set), dtype="string")).to_numpy()
+)
+
+# Index = row_key (para mapear seleção)
+df_editor.index = row_key
+
+# Deixa tudo read-only, exceto Selecionada
+disabled_cols = [c for c in df_editor.columns if c != "Selecionada"]
+
+df_edited = st.data_editor(
+    df_editor,
+    use_container_width=True,
+    hide_index=True,
+    column_config=col_cfg,
+    disabled=disabled_cols,
+    num_rows="fixed",
+    key=KEY_EDITOR,
+)
+
+# Atualiza seleção com base no que foi marcado manualmente na tabela
+selected_now = set(df_edited.index[df_edited["Selecionada"]].tolist())
+
+# Preserva seleções que não estão visíveis + aplica o estado atual visível
+st.session_state[KEY_SELECTED] = (selected_set - current_keys) | selected_now
+selected_set = set(st.session_state[KEY_SELECTED])
+
+# Agora que a seleção foi atualizada, sincroniza o toggle (todos visíveis selecionados?)
+all_visible_selected = (len(current_keys) > 0) and current_keys.issubset(selected_set)
+st.session_state[KEY_SELECT_ALL] = all_visible_selected
+
+# Renderiza o toggle no placeholder (fica acima da tabela)
+with toggle_ph:
+    st.toggle(
+        "Selecionar todos (visíveis)",
+        key=KEY_SELECT_ALL,
+        on_change=_toggle_all_visible,
+    )
+
+# Selecionados (apenas do recorte atual)
+selected_in_view = selected_set & current_keys
+mask_sel = row_key.isin(list(selected_in_view))
+df_selected_base = df_filtrado[mask_sel].copy()
+
+st.caption(f"Selecionados (nesta tabela): **{len(df_selected_base)}**")
+
+# DF para download segue perfil
+if is_user_role:
+    df_download = build_user_view(df_selected_base).reset_index(drop=True)
+else:
+    df_download = df_selected_base.reset_index(drop=True)
+
+xlsx_bytes = df_to_xlsx_bytes(df_download, sheet_name="selecionados")
+
+st.download_button(
+    "Baixar itens selecionados",
+    data=xlsx_bytes,
+    file_name="catalogo_selecionados.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    disabled=df_selected_base.empty,
+    key="cat_btn_download_selected",
+)
+
+

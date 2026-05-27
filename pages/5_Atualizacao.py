@@ -231,10 +231,10 @@ df_view = df[mask].copy()
 ORDER_ATUALIZACAO = [
     "ID","GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
     "TIPO_CODIGO","CODIGO_PRODUTO","INSUMO","ITEM","DESCRICAO","ESPECIFICACAO",
-    "MARCA","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
+    "MARCA","FABRICANTE","QTD_EMB_PRODUTO", "EMB_PRODUTO", "QTD_MED", "UN_MED", "QTD_EMB_COMERCIAL", "EMB_COMERCIAL",
     "SINONIMO","PALAVRA_CHAVE","REFERENCIA",
     "DATA_CADASTRO","USUARIO_CADASTRO",
-    "DATA_APROVACAO","USUARIO_APROVACAO",  
+    "DATA_APROVACAO","USUARIO_APROVACAO",
     "DATA_ATUALIZACAO","USUARIO_ATUALIZACAO",
 ]
 def reorder(df_in: pd.DataFrame, wanted: list[str]) -> pd.DataFrame:
@@ -285,8 +285,8 @@ if st.button("Recarregar tabela"):
     st.rerun()
 
 # ── Pré-processamento: recalcular DESCRICAO/SINONIMO/PALAVRA_CHAVE no estado do editor ──
-_DEPS_SINONIMO_ATU = {"ITEM","ESPECIFICACAO","MARCA","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
-_DEPS_PALAVRA_ATU  = {"SUBFAMILIA","ITEM","MARCA","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
+_DEPS_SINONIMO_ATU = {"ITEM","ESPECIFICACAO","MARCA","FABRICANTE","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
+_DEPS_PALAVRA_ATU  = {"SUBFAMILIA","ITEM","MARCA","FABRICANTE","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
 
 _editor_state_atu = st.session_state.get("editor_atualizacao", {})
 _edited_rows_atu  = _editor_state_atu.get("edited_rows", {})
@@ -313,6 +313,7 @@ for _ri_str, _changes in list(_edited_rows_atu.items()):
             _merged.get("ITEM"),
             _desc_for_sin or "",
             _merged.get("MARCA"),
+            _merged.get("FABRICANTE"),
             _merged.get("QTD_MED"),
             _merged.get("UN_MED"),
             _merged.get("EMB_PRODUTO"),
@@ -325,6 +326,7 @@ for _ri_str, _changes in list(_edited_rows_atu.items()):
             _merged.get("SUBFAMILIA"),
             _merged.get("ITEM"),
             _merged.get("MARCA"),
+            _merged.get("FABRICANTE"),
             _merged.get("EMB_PRODUTO"),
             _merged.get("QTD_MED"),
             _merged.get("UN_MED"),
@@ -394,8 +396,8 @@ if st.button("💾 Salvar alterações"):
         before = fetch_row_snapshot(session, FQN_APR, int(key_val)) if str(key_val).isdigit() else None
         
         deps_desc     = {"ESPECIFICACAO"}
-        deps_sinonimo = {"ITEM","ESPECIFICACAO","MARCA","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
-        deps_palavra  = {"SUBFAMILIA","ITEM","MARCA","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
+        deps_sinonimo = {"ITEM","ESPECIFICACAO","MARCA","FABRICANTE","QTD_MED","UN_MED","EMB_PRODUTO","QTD_EMB_COMERCIAL","EMB_COMERCIAL","DESCRICAO"}
+        deps_palavra  = {"SUBFAMILIA","ITEM","MARCA","FABRICANTE","EMB_PRODUTO","QTD_MED","UN_MED","FAMILIA"}
 
         changed = set(cols_changed)
         set_parts = []
@@ -434,6 +436,7 @@ if st.button("💾 Salvar alterações"):
                 row_after.get("ITEM"),
                 desc_para_sinonimo,
                 row_after.get("MARCA"),
+                row_after.get("FABRICANTE"),
                 row_after.get("QTD_MED"),
                 row_after.get("UN_MED"),
                 row_after.get("EMB_PRODUTO"),
@@ -449,6 +452,7 @@ if st.button("💾 Salvar alterações"):
                 row_after.get("SUBFAMILIA"),
                 row_after.get("ITEM"),
                 row_after.get("MARCA"),
+                row_after.get("FABRICANTE"),
                 row_after.get("EMB_PRODUTO"),
                 row_after.get("QTD_MED"),
                 row_after.get("UN_MED"),

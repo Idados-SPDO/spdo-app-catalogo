@@ -58,12 +58,16 @@ PAGE_META = {
         "page": st.Page("pages/8_Usuarios.py", title="👤 Usuários"),
         "module": "Módulo - Admin",
     },
+    "tabelas": {
+        "page": st.Page("pages/10_Tabelas.py", title="👤 Tabelas"),
+        "module": "Módulo - Operacional",
+    },
 }
 
 
 ROLE_MATRIX = {
     "USER":        ["home", "catalogo"],
-    "OPERACIONAL": ["home", "catalogo", "cadastro", "criacao_insumo","nao_aprovados", "validacao"],
+    "OPERACIONAL": ["home", "catalogo", "cadastro", "criacao_insumo","nao_aprovados", "validacao", "tabelas"],
     "ADMIN":       list(PAGE_META.keys()),
 }
 
