@@ -73,7 +73,7 @@ with tab_form:
         submitted = st.form_submit_button("💾 Salvar")
 
         if submitted:
-            # Apenas NÃO obrigatórios: REFERENCIA, INSUMO
+            # Apenas NÃO obrigatórios: REFERENCIA, INSUMO, ESPECIFICACAO
             obrig = {
                 "GRUPO": grupo,
                 "CATEGORIA": categoria,
@@ -83,7 +83,6 @@ with tab_form:
                 "TIPO_CODIGO": tipo_codigo,
                 "CODIGO_PRODUTO": codigo_produto,
                 "ITEM": item,
-                "ESPECIFICACAO": especificacao,
                 "MARCA": marca,
                 "FABRICANTE": fabricante,
                 "EMB_PRODUTO": emb_produto,
@@ -255,10 +254,10 @@ with tab_excel:
             except:
                 return None
 
-        # Validação de obrigatórios (todos exceto REFERENCIA e INSUMO)
+        # Validação de obrigatórios (todos exceto REFERENCIA, INSUMO e ESPECIFICACAO)
         REQUIRED = [
             "GRUPO","CATEGORIA","SEGMENTO","FAMILIA","SUBFAMILIA",
-            "TIPO_CODIGO","CODIGO_PRODUTO","ITEM","ESPECIFICACAO",
+            "TIPO_CODIGO","CODIGO_PRODUTO","ITEM",
             "MARCA","FABRICANTE","EMB_PRODUTO","UN_MED","QTD_MED","EMB_COMERCIAL","QTD_EMB_COMERCIAL", "QTD_EMB_PRODUTO"
         ]
 

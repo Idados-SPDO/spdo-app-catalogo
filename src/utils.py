@@ -238,7 +238,7 @@ def gerar_template_excel_catalogo() -> bytes:
             "CAMPO": COLS_TEMPLATE,
             "OBS": [
                 "Opcional", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório",
-                "Obrigatório", "Obrigatório", "Opcional", "Obrigatório", "Obrigatório",
+                "Obrigatório", "Obrigatório", "Opcional", "Obrigatório", "Opcional",
                 "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório", "Obrigatório",
             ]
         })
